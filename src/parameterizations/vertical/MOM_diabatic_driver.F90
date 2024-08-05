@@ -260,7 +260,11 @@ contains
 !>  This subroutine imposes the diapycnal mass fluxes and the
 !!  accompanying diapycnal advection of momentum and tracers.
 subroutine diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
+#ifdef IOW
+                    G, GV, US, CS, stoch_CS, OBC, Waves, taux_bot, tauy_bot)
+#else
                     G, GV, US, CS, stoch_CS, OBC, Waves)
+#endif
   type(ocean_grid_type),                      intent(inout) :: G        !< ocean grid structure
   type(verticalGrid_type),                    intent(in)    :: GV       !< ocean vertical grid structure
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(inout) :: u        !< zonal velocity [L T-1 ~> m s-1]
@@ -284,6 +288,10 @@ subroutine diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
   type(stochastic_CS),                        pointer       :: stoch_CS !< stochastic control structure
   type(ocean_OBC_type),                       pointer       :: OBC      !< Open boundaries control structure.
   type(Wave_parameters_CS),                   pointer       :: Waves    !< Surface gravity waves
+#ifdef IOW
+  real, dimension(:,:), optional,             pointer       :: taux_bot
+  real, dimension(:,:), optional,             pointer       :: tauy_bot
+#endif
 
   ! local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: &
@@ -300,6 +308,11 @@ subroutine diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
   real, allocatable, dimension(:,:,:)    :: h_in  ! thickness before thermodynamics [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:)    :: t_in  ! temperature before thermodynamics [C ~> degC]
   real, allocatable, dimension(:,:,:)    :: s_in  ! salinity before thermodynamics [S ~> ppt]
+#ifdef IOW
+  real, allocatable, dimension(:,:)      :: tau_bot ! bottom shear stress
+  real, allocatable, dimension(:,:)      :: taux_mean ! intermediate variables for tau at tracer points
+  real, allocatable, dimension(:,:)      :: tauy_mean ! shoud make code more readable
+#endif
 
   if (GV%ke == 1) return
 
@@ -336,6 +349,20 @@ subroutine diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
     allocate(t_in(G%isd:G%ied, G%jsd:G%jed, GV%ke)) ; t_in(:,:,:) = tv%T(:,:,:)
     allocate(s_in(G%isd:G%ied, G%jsd:G%jed, GV%ke)) ; s_in(:,:,:) = tv%S(:,:,:)
   endif
+
+#ifdef IOW
+  ! prepare tau_bot
+  if(present(taux_bot) .and. present(tauy_bot)) then
+    allocate(tau_bot(G%isd:G%ied, G%jsd:G%jed))
+    allocate(taux_mean(G%isd:G%ied, G%jsd:G%jed))
+    allocate(tauy_mean(G%isd:G%ied, G%jsd:G%jed))
+    do j=js,je; do i=is,ie
+       taux_mean(i,j) = 0.5*(taux_bot(i,j) + taux_bot(i-1,j ))
+       tauy_mean(i,j) = 0.5*(tauy_bot(i,j) + tauy_bot(i, j-1))
+       tau_bot(i,j)   = sqrt(taux_mean(i,j)*taux_mean(i,j) + tauy_mean(i,j)*tauy_mean(i,j))
+    enddo; enddo
+  endif
+#endif
 
   if (CS%debug) then
     call MOM_state_chksum("Start of diabatic ", u, v, h, G, GV, US, haloshift=0)
@@ -392,12 +419,24 @@ subroutine diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
     call diabatic_ALE_legacy(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
                       G, GV, US, CS, stoch_CS, Waves)
   elseif (CS%useALEalgorithm) then
+#ifdef IOW
+    call diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
+                      G, GV, US, CS, stoch_CS, Waves, tau_bot=tau_bot)
+#else
     call diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
                       G, GV, US, CS, stoch_CS, Waves)
+#endif
   else
     call layered_diabatic(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
                           G, GV, US, CS, Waves)
   endif
+#ifdef IOW
+  if (allocated(tau_bot)) then
+    deallocate(tau_bot)
+    deallocate(taux_mean)
+    deallocate(tauy_mean)
+  endif
+#endif
 
   call cpu_clock_begin(id_clock_pass)
   if (associated(visc%sfc_buoy_flx)) &
@@ -504,8 +543,13 @@ end subroutine diabatic
 
 !> Applies diabatic forcing and diapycnal mixing of temperature, salinity and other tracers for use
 !! with an ALE algorithm.  This version uses an older set of algorithms compared with diabatic_ALE.
+#ifdef IOW
+subroutine diabatic_ALE_legacy(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
+                           G, GV, US, CS, stoch_CS, Waves, tau_bot)
+#else
 subroutine diabatic_ALE_legacy(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
                            G, GV, US, CS, stoch_CS, Waves)
+#endif
   type(ocean_grid_type),                      intent(inout) :: G        !< ocean grid structure
   type(verticalGrid_type),                    intent(in)    :: GV       !< ocean vertical grid structure
   type(unit_scale_type),                      intent(in)    :: US       !< A dimensional unit scaling type
@@ -528,6 +572,9 @@ subroutine diabatic_ALE_legacy(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Tim
   type(diabatic_CS),                          pointer       :: CS       !< module control structure
   type(stochastic_CS),                        pointer       :: stoch_CS !< stochastic control structure
   type(Wave_parameters_CS),                   pointer       :: Waves    !< Surface gravity waves
+#ifdef IOW
+  real, dimension(SZI_(G),SZJ_(G)), optional, intent(in)    :: tau_bot  !< bottom shear stess
+#endif
 
   ! local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
@@ -1119,8 +1166,13 @@ end subroutine diabatic_ALE_legacy
 
 !>  This subroutine imposes the diapycnal mass fluxes and the
 !!  accompanying diapycnal advection of momentum and tracers.
+#ifdef IOW
+subroutine diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
+                        G, GV, US, CS, stoch_CS, Waves, tau_bot)
+#else
 subroutine diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, &
                         G, GV, US, CS, stoch_CS, Waves)
+#endif
   type(ocean_grid_type),                      intent(inout) :: G        !< ocean grid structure
   type(verticalGrid_type),                    intent(in)    :: GV       !< ocean vertical grid structure
   type(unit_scale_type),                      intent(in)    :: US       !< A dimensional unit scaling type
@@ -1143,6 +1195,9 @@ subroutine diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, 
   type(diabatic_CS),                          pointer       :: CS       !< module control structure
   type(stochastic_CS),                        pointer       :: stoch_CS !< stochastic control structure
   type(Wave_parameters_CS),                   pointer       :: Waves    !< Surface gravity waves
+#ifdef IOW
+   real, dimension(SZI_(G),SZJ_(G)), optional, intent(in)   :: tau_bot  !< bottom shear stess
+#endif
 
   ! local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
@@ -1608,7 +1663,12 @@ subroutine diabatic_ALE(u, v, h, tv, BLD, fluxes, visc, ADp, CDp, dt, Time_end, 
                               KPP_CSp=CS%KPP_CSp, &
                               nonLocalTrans=KPP_NLTscalar, &
                               evap_CFL_limit=CS%evap_CFL_limit, &
+#ifdef IOW
+                              minimum_forcing_depth=CS%minimum_forcing_depth, &
+                              KdBio=Kd_heat,tau_bot=tau_bot)
+#else
                               minimum_forcing_depth=CS%minimum_forcing_depth, h_BL=visc%h_ML)
+#endif
 
   call cpu_clock_end(id_clock_tracers)
 

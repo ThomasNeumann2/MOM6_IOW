@@ -1617,8 +1617,27 @@ subroutine step_MOM_thermo(CS, G, GV, US, u, v, h, tv, fluxes, dtdia, &
 
     call cpu_clock_begin(id_clock_diabatic)
 
+#ifdef IOW
+if(associated(CS%dyn_unsplit_CSp)) then 
+    call diabatic(u, v, h, tv, CS%Hml, fluxes, CS%visc, CS%ADp, CS%CDp, dtdia, &
+                  Time_end_thermo, G, GV, US, CS%diabatic_CSp, CS%stoch_CS, CS%OBC, Waves, &
+                  taux_bot=CS%dyn_unsplit_CSp%taux_bot, tauy_bot=CS%dyn_unsplit_CSp%tauy_bot)
+else if (associated(CS%dyn_unsplit_RK2_CSp)) then 
+    call diabatic(u, v, h, tv, CS%Hml, fluxes, CS%visc, CS%ADp, CS%CDp, dtdia, &
+                  Time_end_thermo, G, GV, US, CS%diabatic_CSp, CS%stoch_CS, CS%OBC, Waves, &
+                  taux_bot=CS%dyn_unsplit_RK2_CSp%taux_bot, tauy_bot=CS%dyn_unsplit_RK2_CSp%tauy_bot)
+else if (associated(CS%dyn_split_RK2_CSp)) then 
+    call diabatic(u, v, h, tv, CS%Hml, fluxes, CS%visc, CS%ADp, CS%CDp, dtdia, &
+                  Time_end_thermo, G, GV, US, CS%diabatic_CSp, CS%stoch_CS, CS%OBC, Waves, &
+                  taux_bot=CS%dyn_split_RK2_CSp%taux_bot, tauy_bot=CS%dyn_split_RK2_CSp%tauy_bot)
+else
     call diabatic(u, v, h, tv, CS%Hml, fluxes, CS%visc, CS%ADp, CS%CDp, dtdia, &
                   Time_end_thermo, G, GV, US, CS%diabatic_CSp, CS%stoch_CS, CS%OBC, Waves)
+endif
+#else
+    call diabatic(u, v, h, tv, CS%Hml, fluxes, CS%visc, CS%ADp, CS%CDp, dtdia, &
+                  Time_end_thermo, G, GV, US, CS%diabatic_CSp, CS%stoch_CS, CS%OBC, Waves)
+#endif
     fluxes%fluxes_used = .true.
 
     if (showCallTree) call callTree_waypoint("finished diabatic (step_MOM_thermo)")

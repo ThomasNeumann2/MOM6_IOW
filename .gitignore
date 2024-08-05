@@ -2,6 +2,8 @@
 *.swp
 *~
 html
+# ignore CEFI's BGC, it is an own repository, recursive?
+config_src/external/CEFI_ocean_BGC/
 
 
 # Autoconf output

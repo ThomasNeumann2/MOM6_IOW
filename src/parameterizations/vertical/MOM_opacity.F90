@@ -49,7 +49,11 @@ type, public :: optics_type
 end type optics_type
 
 !> The control structure with parameters for the MOM_opacity module
+#ifdef IOW
+type, public :: opacity_CS
+#else
 type, public :: opacity_CS ; private
+#endif
   logical :: var_pen_sw      !<   If true, use one of the CHL_A schemes (specified by OPACITY_SCHEME) to
                              !! determine the e-folding depth of incoming shortwave radiation.
   integer :: opacity_scheme  !<   An integer indicating which scheme should be used to translate
@@ -77,19 +81,32 @@ type, public :: opacity_CS ; private
 end type opacity_CS
 
 !>@{ Coded integers to specify the opacity scheme
+#ifdef IOW
+integer, parameter :: NO_SCHEME = 0, MANIZZA_05 = 1, MOREL_88 = 2, SINGLE_EXP = 3, DOUBLE_EXP = 4 &
+                      , ERGOM = 5
+#else
 integer, parameter :: NO_SCHEME = 0, MANIZZA_05 = 1, MOREL_88 = 2, SINGLE_EXP = 3, DOUBLE_EXP = 4
+#endif
 !>@}
 
 character*(10), parameter :: MANIZZA_05_STRING = "MANIZZA_05" !< String to specify the opacity scheme
 character*(10), parameter :: MOREL_88_STRING   = "MOREL_88"   !< String to specify the opacity scheme
+# ifdef IOW
+character*(10), parameter :: ERGOM_STRING      = "ERGOM"      !< String to specify the opacity scheme
+# endif
 character*(10), parameter :: SINGLE_EXP_STRING = "SINGLE_EXP" !< String to specify the opacity scheme
 character*(10), parameter :: DOUBLE_EXP_STRING = "DOUBLE_EXP" !< String to specify the opacity scheme
 
 contains
 
 !> This sets the opacity of sea water based based on one of several different schemes.
+#ifdef IOW
+subroutine set_opacity(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
+                       G, GV, US, CS, chl_2d, chl_3d, opac)
+#else
 subroutine set_opacity(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
                        G, GV, US, CS, chl_2d, chl_3d)
+#endif
   type(optics_type),       intent(inout) :: optics !< An optics structure that has values
                                                    !! set based on the opacities.
   real, dimension(:,:),    pointer       :: sw_total !< Total shortwave flux into the ocean [Q R Z T-1 ~> W m-2]
@@ -105,6 +122,10 @@ subroutine set_opacity(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_
                  optional, intent(in)    :: chl_2d !< Vertically uniform chlorophyll-A concentrations [mg m-3]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                  optional, intent(in)    :: chl_3d !< The chlorophyll-A concentrations of each layer [mg m-3]
+#ifdef IOW
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                 optional, intent(in)    :: opac   !< The opacity of each layer [m-1]
+#endif
 
   ! Local variables
   integer :: i, j, k, n, is, ie, js, je, nz
@@ -118,10 +139,21 @@ subroutine set_opacity(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_
                             ! from op to 1/op_diag_len * tanh(op * op_diag_len)
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
 
+# ifdef IOW
+  if ((present(chl_2d) .or. present(chl_3d)) .and. .not.present(opac)) then
+    ! The optical properties are based on chlorophyll concentrations.
+    call opacity_from_chl(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
+                          G, GV, US, CS, chl_2d, chl_3d)
+  elseif (present(opac)) then
+    ! Get opacity directly from BGC model (ERGOM)
+    call opacity_from_opac(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
+                           G, GV, US, CS, opac)
+# else
   if (present(chl_2d) .or. present(chl_3d)) then
     ! The optical properties are based on chlorophyll concentrations.
     call opacity_from_chl(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
                           G, GV, US, CS, chl_2d, chl_3d)
+# endif
   else ! Use sw e-folding scale set by MOM_input
     if (optics%nbands <= 1) then ; Inv_nbands = 1.0
     else ; Inv_nbands = 1.0 / real(optics%nbands) ; endif
@@ -212,6 +244,117 @@ subroutine set_opacity(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_
 
 end subroutine set_opacity
 
+#ifdef IOW
+!> This sets the opacity as estimated in ERGOM or other BGC model
+!!
+subroutine opacity_from_opac(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir, sw_nir_dif, &
+                            G, GV, US, CS, opac)
+  type(optics_type),       intent(inout) :: optics !< An optics structure that has values
+                                                   !! set based on the opacities.
+  real, dimension(:,:),    pointer       :: sw_total !< Total shortwave flux into the ocean [Q R Z T-1 ~> W m-2]
+  real, dimension(:,:),    pointer       :: sw_vis_dir !< Visible, direct shortwave into the ocean [Q R Z T-1 ~> W m-2]
+  real, dimension(:,:),    pointer       :: sw_vis_dif !< Visible, diffuse shortwave into the ocean [Q R Z T-1 ~> W m-2]
+  real, dimension(:,:),    pointer       :: sw_nir_dir !< Near-IR, direct shortwave into the ocean [Q R Z T-1 ~> W m-2]
+  real, dimension(:,:),    pointer       :: sw_nir_dif !< Near-IR, diffuse shortwave into the ocean [Q R Z T-1 ~> W m-2]
+  type(ocean_grid_type),   intent(in)    :: G      !< The ocean's grid structure.
+  type(verticalGrid_type), intent(in)    :: GV     !< The ocean's vertical grid structure.
+  type(unit_scale_type),   intent(in)    :: US     !< A dimensional unit scaling type
+  type(opacity_CS)                       :: CS     !< The control structure.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &     
+                           intent(in)    :: opac   !< A 3-d field of opacities [m-1]
+
+! not sure whether we need all this
+  real :: Inv_nbands        ! The inverse of the number of bands of penetrating
+                            ! shortwave radiation [nondim]
+  real :: Inv_nbands_nir    ! The inverse of the number of bands of penetrating
+                            ! near-infrared radiation [nondim]
+  real :: SW_pen_tot        ! The sum across the bands of the penetrating
+                            ! shortwave radiation [Q R Z T-1 ~> W m-2].
+  real :: SW_vis_tot        ! The sum across the visible bands of shortwave
+                            ! radiation [Q R Z T-1 ~> W m-2].
+  real :: SW_nir_tot        ! The sum across the near infrared bands of shortwave
+                            ! radiation [Q R Z T-1 ~> W m-2].
+  character(len=128) :: mesg
+  integer :: i, j, k, n, is, ie, js, je, nz, nbands
+  logical :: multiband_vis_input, multiband_nir_input, total_sw_input
+!!!
+
+  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
+
+  nbands = optics%nbands
+
+  if (nbands <= 1) then ; Inv_nbands = 1.0
+  else ; Inv_nbands = 1.0 / real(nbands) ; endif
+
+  if (nbands <= 2) then ; Inv_nbands_nir = 0.0
+  else ; Inv_nbands_nir = 1.0 / real(nbands - 2.0) ; endif
+
+  if (.not.(associated(sw_total) .or. (associated(sw_vis_dir) .and. associated(sw_vis_dif) .and. &
+                                       associated(sw_nir_dir) .and. associated(sw_nir_dif)) )) then
+    if (.not.CS%warning_issued) then
+      call MOM_error(WARNING, &
+                     "opacity_from_opac called without any shortwave flux arrays allocated.\n"//&
+                     "Consider setting PEN_SW_NBANDS = 0 if no shortwave fluxes are being used.")
+    endif
+    CS%warning_issued = .true.
+  endif
+!      call MOM_error(WARNING, &
+!         "opacity_from_opac: Enter opacity_from_opac\n")
+
+
+  multiband_vis_input = (associated(sw_vis_dir) .and. associated(sw_vis_dif))
+  multiband_nir_input = (associated(sw_nir_dir) .and. associated(sw_nir_dif))
+  total_sw_input = associated(sw_total)
+  ! set SW flux at surface in different SW bands
+  select case (CS%opacity_scheme)
+   case (ERGOM)
+!   call MOM_error(WARNING, &
+!          "opacity_from_opac: Enter ERGOM case.\n")
+!print*,"multiband_vis_input: ",multiband_vis_input
+!print*,"multiband_nir_input: ",multiband_nir_input
+!print*,"total_sw_input: ",total_sw_input
+!print*,"Inv_nbands: ", Inv_nbands
+
+     do j=js,je ; do i=is,ie
+       SW_pen_tot = 0.0; SW_vis_tot = 0.0
+       if (G%mask2dT(i,j) > 0.0) then
+         if (multiband_vis_input) then
+           SW_vis_tot = sw_vis_dir(i,j) + sw_vis_dif(i,j)
+         elseif (total_sw_input) then
+           SW_vis_tot = sw_total(i,j)
+         endif
+       endif
+       ! if there are more then one SW band (later in ERGOM?), cycle through bands
+       do n=1,nbands
+         optics%sw_pen_band(n,i,j) = Inv_nbands*SW_vis_tot
+!print*,"AAAAAAAAAAAAA ",i,j,optics%sw_pen_band(n,i,j)
+       enddo
+!optics%sw_pen_band(n,i,j) = SW_vis_tot
+     enddo ; enddo
+   case default
+     call MOM_error(FATAL, "opacity_from_opac: CS%opacity_scheme is not valid. Only ERGOM so far.")
+  end select
+
+  ! set opacity from given opac values
+  do k=1,nz
+   select case (CS%opacity_scheme)
+    case (ERGOM)
+        do j=js,je ; do i=is,ie
+           optics%opacity_band(1,i,j,k) = CS%opacity_land_value
+           if (G%mask2dT(i,j) > 0.0) &
+              optics%opacity_band(1,i,j,k) = opac(i,j,k)
+           ! ERGOM has not implmentet more then 1 SW band, so far
+           do n=2,optics%nbands
+              optics%opacity_band(n,i,j,k) = optics%opacity_band(1,i,j,k)
+           enddo
+         enddo ; enddo
+    case default
+      call MOM_error(FATAL, "opacity_from_opac: CS%opacity_scheme is not valid. Only ERGOM so far.")
+   end select
+  enddo
+
+end subroutine opacity_from_opac
+#endif
 
 !> This sets the "blue" band opacity based on chlorophyll A concentrations
 !! The red portion is lumped into the net heating at the surface.
@@ -354,6 +497,15 @@ subroutine opacity_from_chl(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir
           optics%sw_pen_band(n,i,j) = Inv_nbands*sw_pen_tot
         enddo
       enddo ; enddo
+#ifdef IOW
+    case (ERGOM)
+!    do noting
+!      if (.not.CS%warning_issued) then
+!      call MOM_error(WARNING, &
+!         "opacity_from_chl called with scheme ERGOM.\n"//&
+!         "We will do nothing here but call opacity_from_opac.")
+!      endif
+#endif
     case default
       call MOM_error(FATAL, "opacity_from_chl: CS%opacity_scheme is not valid.")
   end select
@@ -390,6 +542,15 @@ subroutine opacity_from_chl(optics, sw_total, sw_vis_dir, sw_vis_dif, sw_nir_dir
             optics%opacity_band(n,i,j,k) = optics%opacity_band(1,i,j,k)
           enddo
         enddo ; enddo
+#ifdef IOW
+    case (ERGOM)
+!    do nothing
+!    if (.not.CS%warning_issued) then
+!      call MOM_error(WARNING, &
+!         "opacity_from_chl called with scheme ERGOM.\n"//&
+!         "We will do nothing here but call opacity_from_opac.")
+!    endif
+#endif
 
       case default
         call MOM_error(FATAL, "opacity_from_chl: CS%opacity_scheme is not valid.")
@@ -998,6 +1159,9 @@ subroutine opacity_init(Time, G, GV, US, param_file, diag, CS, optics)
                  "concentrations are translated into opacities. Currently "//&
                  "valid options include:\n"//&
                  " \t\t  MANIZZA_05 - Use Manizza et al., GRL, 2005. \n"//&
+#ifdef IOW
+                 " \t\t  ERGOM - Use opacities estimated in ERGOM. \n"//&
+#endif
                  " \t\t  MOREL_88 - Use Morel, JGR, 1988.", &
                  default=MANIZZA_05_STRING)
     if (len_trim(tmpstr) > 0) then
@@ -1007,6 +1171,10 @@ subroutine opacity_init(Time, G, GV, US, param_file, diag, CS, optics)
           CS%opacity_scheme = MANIZZA_05 ; scheme_string = MANIZZA_05_STRING
         case (MOREL_88_STRING)
           CS%opacity_scheme = MOREL_88 ; scheme_string = MOREL_88_STRING
+# ifdef IOW
+        case (ERGOM_STRING)
+          CS%opacity_scheme = ERGOM ;    scheme_string = ERGOM_STRING
+# endif
         case default
           call MOM_error(FATAL, "opacity_init: #DEFINE OPACITY_SCHEME "//&
                                   trim(tmpstr) // "in input file is invalid.")

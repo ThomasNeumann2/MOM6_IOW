@@ -111,10 +111,17 @@ type, public :: MOM_dyn_unsplit_CS ; private
     PFv, &    !< PFv = -dM/dy [L T-2 ~> m s-2].
     diffv     !< Meridional acceleration due to convergence of the along-isopycnal stress tensor [L T-2 ~> m s-2].
 
+#ifdef IOW
+  real, public, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
+                                                      !! to the seafloor [R L Z T-2 ~> Pa] 
+  real, public, pointer, dimension(:,:) :: tauy_bot => NULL() !< frictional y-bottom stress from the ocean
+                                                      !! to the seafloor [R L Z T-2 ~> Pa] 
+#else
   real, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
   real, pointer, dimension(:,:) :: tauy_bot => NULL() !< frictional y-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
+#endif
 
   logical :: dt_visc_bug    !< If false, use the correct timestep in viscous terms applied in the
                             !! first predictor step and in the calculation of the turbulent mixed
