@@ -215,16 +215,17 @@ subroutine initialize_ALE_sponge_fixed(Iresttime, G, GV, param_file, CS, data_h,
                  default=.false.)
 
   call get_param(param_file, mdl, "REMAPPING_SCHEME", remapScheme, &
-                 "This sets the reconstruction scheme used "//&
-                 " for vertical remapping for all variables.", &
                  default="PLM", do_not_log=.true.)
+  call get_param(param_file, mdl, "SPONGE_REMAPPING_SCHEME", remapScheme, &
+          "This sets the reconstruction scheme used "//&
+          "for vertical remapping for all SPONGE variables.", default=remapScheme)
 
+  !This default should be from REMAP_BOUNDARY_EXTRAP
   call get_param(param_file, mdl, "BOUNDARY_EXTRAPOLATION", bndExtrapolation, &
-                 "When defined, a proper high-order reconstruction "//&
-                 "scheme is used within boundary cells rather "//&
-                 "than PCM. E.g., if PPM is used for remapping, a "//&
-                 "PPM reconstruction will also be used within boundary cells.", &
                  default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "SPONGE_BOUNDARY_EXTRAP", bndExtrapolation, &
+                 "If true, values at the interfaces of SPONGE boundary cells are "//&
+                 "extrapolated instead of piecewise constant", default=bndExtrapolation)
   call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
                  "This sets the default value for the various _ANSWER_DATE parameters.", &
                  default=99991231)
@@ -235,10 +236,12 @@ subroutine initialize_ALE_sponge_fixed(Iresttime, G, GV, param_file, CS, data_h,
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
   if (.not.GV%Boussinesq) CS%remap_answer_date = max(CS%remap_answer_date, 20230701)
+  call get_param(param_file, mdl, "REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 do_not_log=.true., default=.true.)
   call get_param(param_file, mdl, "SPONGE_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
                  "If true, use the OM4 remapping-via-subcells algorithm for ALE sponge. "//&
                  "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
-                 "We recommend setting this option to false.", default=.true.)
+                 "We recommend setting this option to false.", default=om4_remap_via_sub_cells)
 
   call get_param(param_file, mdl, "HOR_REGRID_ANSWER_DATE", CS%hor_regrid_answer_date, &
                  "The vintage of the order of arithmetic for horizontal regridding.  "//&
@@ -495,15 +498,16 @@ subroutine initialize_ALE_sponge_varying(Iresttime, G, GV, US, param_file, CS, I
                  "Apply sponges in u and v, in addition to tracers.", &
                  default=.false.)
   call get_param(param_file, mdl, "REMAPPING_SCHEME", remapScheme, &
-                 "This sets the reconstruction scheme used "//&
-                 " for vertical remapping for all variables.", &
                  default="PLM", do_not_log=.true.)
+  call get_param(param_file, mdl, "SPONGE_REMAPPING_SCHEME", remapScheme, &
+          "This sets the reconstruction scheme used "//&
+          "for vertical remapping for all SPONGE variables.", default=remapScheme)
+  !This default should be from REMAP_BOUNDARY_EXTRAP
   call get_param(param_file, mdl, "BOUNDARY_EXTRAPOLATION", bndExtrapolation, &
-                 "When defined, a proper high-order reconstruction "//&
-                 "scheme is used within boundary cells rather "//&
-                 "than PCM. E.g., if PPM is used for remapping, a "//&
-                 "PPM reconstruction will also be used within boundary cells.", &
                  default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "SPONGE_BOUNDARY_EXTRAP", bndExtrapolation, &
+                 "If true, values at the interfaces of SPONGE boundary cells are "//&
+                 "extrapolated instead of piecewise constant", default=bndExtrapolation)
   call get_param(param_file, mdl, "VARYING_SPONGE_MASK_THICKNESS", CS%varying_input_dz_mask, &
                  "An input file thickness below which the target values with "//&
                  "time-varying sponges are replaced by the value above.", &
@@ -518,10 +522,12 @@ subroutine initialize_ALE_sponge_varying(Iresttime, G, GV, US, param_file, CS, I
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date)
+  call get_param(param_file, mdl, "REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 do_not_log=.true., default=.true.)
   call get_param(param_file, mdl, "SPONGE_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
                  "If true, use the OM4 remapping-via-subcells algorithm for ALE sponge. "//&
                  "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
-                 "We recommend setting this option to false.", default=.true.)
+                 "We recommend setting this option to false.", default=om4_remap_via_sub_cells)
   call get_param(param_file, mdl, "HOR_REGRID_ANSWER_DATE", CS%hor_regrid_answer_date, &
                  "The vintage of the order of arithmetic for horizontal regridding.  "//&
                  "Dates before 20190101 give the same answers as the code did in late 2018, "//&

@@ -320,7 +320,8 @@ type, public :: ocean_OBC_type
   logical :: add_tide_constituents = .false.          !< If true, add tidal constituents to the boundary elevation
                                                       !! and velocity. Will be set to true if n_tide_constituents > 0.
   character(len=2), allocatable, dimension(:) :: tide_names  !< Names of tidal constituents to add to the boundary data.
-  real, allocatable, dimension(:) :: tide_frequencies !< Angular frequencies of chosen tidal constituents [T-1 ~> s-1].
+  real, allocatable, dimension(:) :: tide_frequencies !< Angular frequencies of chosen tidal
+                                                      !! constituents [rad T-1 ~> rad s-1].
   real, allocatable, dimension(:) :: tide_eq_phases   !< Equilibrium phases of chosen tidal constituents [rad].
   real, allocatable, dimension(:) :: tide_fn          !< Amplitude modulation of boundary tides by nodal cycle [nondim].
   real, allocatable, dimension(:) :: tide_un          !< Phase modulation of boundary tides by nodal cycle [rad].
@@ -352,24 +353,24 @@ type, public :: ocean_OBC_type
   type(remapping_CS),      pointer :: remap_h_CS=> NULL() !< ALE remapping control structure for
                                                           !! thickness-based fields on segments
   type(OBC_registry_type), pointer :: OBC_Reg => NULL()  !< Registry type for boundaries
-  real, allocatable :: rx_normal(:,:,:)  !< Array storage for normal phase speed for EW radiation OBCs in units of
+  real, pointer :: rx_normal(:,:,:)  !< Array storage for normal phase speed for EW radiation OBCs in units of
                                          !! grid points per timestep [nondim]
-  real, allocatable :: ry_normal(:,:,:)  !< Array storage for normal phase speed for NS radiation OBCs in units of
+  real, pointer :: ry_normal(:,:,:)  !< Array storage for normal phase speed for NS radiation OBCs in units of
                                          !! grid points per timestep [nondim]
-  real, allocatable :: rx_oblique_u(:,:,:) !< X-direction oblique boundary condition radiation speeds squared
+  real, pointer :: rx_oblique_u(:,:,:) !< X-direction oblique boundary condition radiation speeds squared
                                            !! at u points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: ry_oblique_u(:,:,:) !< Y-direction oblique boundary condition radiation speeds squared
+  real, pointer :: ry_oblique_u(:,:,:) !< Y-direction oblique boundary condition radiation speeds squared
                                            !! at u points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: rx_oblique_v(:,:,:) !< X-direction oblique boundary condition radiation speeds squared
+  real, pointer :: rx_oblique_v(:,:,:) !< X-direction oblique boundary condition radiation speeds squared
                                            !! at v points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: ry_oblique_v(:,:,:) !< Y-direction oblique boundary condition radiation speeds squared
+  real, pointer :: ry_oblique_v(:,:,:) !< Y-direction oblique boundary condition radiation speeds squared
                                            !! at v points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: cff_normal_u(:,:,:) !< Denominator for normalizing EW oblique boundary condition radiation
+  real, pointer :: cff_normal_u(:,:,:) !< Denominator for normalizing EW oblique boundary condition radiation
                                            !! rates at u points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: cff_normal_v(:,:,:) !< Denominator for normalizing NS oblique boundary condition radiation
+  real, pointer :: cff_normal_v(:,:,:) !< Denominator for normalizing NS oblique boundary condition radiation
                                            !! rates at v points for restarts [L2 T-2 ~> m2 s-2]
-  real, allocatable :: tres_x(:,:,:,:)   !< Array storage of tracer reservoirs for restarts, in unscaled units [conc]
-  real, allocatable :: tres_y(:,:,:,:)   !< Array storage of tracer reservoirs for restarts, in unscaled units [conc]
+  real, pointer :: tres_x(:,:,:,:)   !< Array storage of tracer reservoirs for restarts, in unscaled units [conc]
+  real, pointer :: tres_y(:,:,:,:)   !< Array storage of tracer reservoirs for restarts, in unscaled units [conc]
   logical :: debug                       !< If true, write verbose checksums for debugging purposes.
   real :: silly_h  !< A silly value of thickness outside of the domain that can be used to test
                    !! the independence of the OBCs to this external data [Z ~> m].
@@ -448,9 +449,8 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   character(len=200) :: config1          ! String for OBC_USER_CONFIG
   real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
-  logical :: check_reconstruction, check_remapping, force_bounds_in_subcell
+  logical :: check_remapping, force_bounds_in_subcell
   logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
-  character(len=64)  :: remappingScheme
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
 
@@ -676,10 +676,12 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     enddo
 
     call get_param(param_file, mdl, "REMAPPING_SCHEME", OBC%remappingScheme, &
+          default=remappingDefaultScheme, do_not_log=.true.)
+    call get_param(param_file, mdl, "OBC_REMAPPING_SCHEME", OBC%remappingScheme, &
           "This sets the reconstruction scheme used "//&
-          "for vertical remapping for all variables. "//&
+          "for OBC vertical remapping for all variables. "//&
           "It can be one of the following schemes: \n"//&
-          trim(remappingSchemesDoc), default=remappingDefaultScheme,do_not_log=.true.)
+          trim(remappingSchemesDoc), default=OBC%remappingScheme)
     call get_param(param_file, mdl, "FATAL_CHECK_RECONSTRUCTIONS", OBC%check_reconstruction, &
           "If true, cell-by-cell reconstructions are checked for "//&
           "consistency and if non-monotonicity or an inconsistency is "//&
@@ -704,10 +706,13 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date)
+    call get_param(param_file, mdl, "REMAPPING_USE_OM4_SUBCELLS", OBC%om4_remap_via_sub_cells, &
+                   do_not_log=.true., default=.true.)
+
     call get_param(param_file, mdl, "OBC_REMAPPING_USE_OM4_SUBCELLS", OBC%om4_remap_via_sub_cells, &
                  "If true, use the OM4 remapping-via-subcells algorithm for neutral diffusion. "//&
                  "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
-                 "We recommend setting this option to false.", default=.true.)
+                 "We recommend setting this option to false.", default=OBC%om4_remap_via_sub_cells)
 
   endif ! OBC%number_of_segments > 0
 
@@ -1230,7 +1235,7 @@ subroutine initialize_obc_tides(OBC, US, param_file)
         "This is only used if TIDES and TIDE_"//trim(OBC%tide_names(c))// &
         " are true, or if OBC_TIDE_N_CONSTITUENTS > 0 and "//trim(OBC%tide_names(c))//&
         " is in OBC_TIDE_CONSTITUENTS.", &
-        units="s-1", default=tidal_frequency(trim(OBC%tide_names(c))), scale=US%T_to_s)
+        units="rad s-1", default=tidal_frequency(trim(OBC%tide_names(c))), scale=US%T_to_s)
 
     ! Find equilibrium phase if needed
     if (OBC%add_eq_phase) then
@@ -1475,7 +1480,7 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, PF, reentrant_y)
                      "Timescales in days for nudging along a segment, "//&
                      "for inflow, then outflow. Setting both to zero should "//&
                      "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., default=0., units="days", scale=86400.0*US%s_to_T)
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
       OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
       OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
       deallocate(tnudge)
@@ -1616,7 +1621,7 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, PF, reentrant_x)
                      "Timescales in days for nudging along a segment, "//&
                      "for inflow, then outflow. Setting both to zero should "//&
                      "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., default=0., units="days", scale=86400.0*US%s_to_T)
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
       OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
       OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
       deallocate(tnudge)
@@ -1947,15 +1952,15 @@ subroutine open_boundary_init(G, GV, US, param_file, OBC, restart_CS)
     call create_group_pass(OBC%pass_oblique, OBC%cff_normal_u, OBC%cff_normal_v, G%Domain, To_All+Scalar_Pair)
     call do_group_pass(OBC%pass_oblique, G%Domain)
   endif
-  if (allocated(OBC%tres_x) .and. allocated(OBC%tres_y)) then
+  if (associated(OBC%tres_x) .and. associated(OBC%tres_y)) then
     do m=1,OBC%ntr
       call pass_vector(OBC%tres_x(:,:,:,m), OBC%tres_y(:,:,:,m), G%Domain, To_All+Scalar_Pair)
     enddo
-  elseif (allocated(OBC%tres_x)) then
+  elseif (associated(OBC%tres_x)) then
     do m=1,OBC%ntr
       call pass_var(OBC%tres_x(:,:,:,m), G%Domain, position=EAST_FACE)
     enddo
-  elseif (allocated(OBC%tres_y)) then
+  elseif (associated(OBC%tres_y)) then
     do m=1,OBC%ntr
       call pass_var(OBC%tres_y(:,:,:,m), G%Domain, position=NORTH_FACE)
     enddo
@@ -2000,16 +2005,16 @@ subroutine open_boundary_dealloc(OBC)
   if (allocated(OBC%segment)) deallocate(OBC%segment)
   if (allocated(OBC%segnum_u)) deallocate(OBC%segnum_u)
   if (allocated(OBC%segnum_v)) deallocate(OBC%segnum_v)
-  if (allocated(OBC%rx_normal)) deallocate(OBC%rx_normal)
-  if (allocated(OBC%ry_normal)) deallocate(OBC%ry_normal)
-  if (allocated(OBC%rx_oblique_u)) deallocate(OBC%rx_oblique_u)
-  if (allocated(OBC%ry_oblique_u)) deallocate(OBC%ry_oblique_u)
-  if (allocated(OBC%rx_oblique_v)) deallocate(OBC%rx_oblique_v)
-  if (allocated(OBC%ry_oblique_v)) deallocate(OBC%ry_oblique_v)
-  if (allocated(OBC%cff_normal_u)) deallocate(OBC%cff_normal_u)
-  if (allocated(OBC%cff_normal_v)) deallocate(OBC%cff_normal_v)
-  if (allocated(OBC%tres_x)) deallocate(OBC%tres_x)
-  if (allocated(OBC%tres_y)) deallocate(OBC%tres_y)
+  if (associated(OBC%rx_normal)) nullify(OBC%rx_normal)
+  if (associated(OBC%ry_normal)) nullify(OBC%ry_normal)
+  if (associated(OBC%rx_oblique_u)) nullify(OBC%rx_oblique_u)
+  if (associated(OBC%ry_oblique_u)) nullify(OBC%ry_oblique_u)
+  if (associated(OBC%rx_oblique_v)) nullify(OBC%rx_oblique_v)
+  if (associated(OBC%ry_oblique_v)) nullify(OBC%ry_oblique_v)
+  if (associated(OBC%cff_normal_u)) nullify(OBC%cff_normal_u)
+  if (associated(OBC%cff_normal_v)) nullify(OBC%cff_normal_v)
+  if (associated(OBC%tres_x)) nullify(OBC%tres_x)
+  if (associated(OBC%tres_y)) nullify(OBC%tres_y)
   if (associated(OBC%remap_z_CS)) deallocate(OBC%remap_z_CS)
   if (associated(OBC%remap_h_CS)) deallocate(OBC%remap_h_CS)
   deallocate(OBC)
@@ -3368,7 +3373,7 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
                   haloshift=0, symmetric=sym, unscale=1.0/US%L_T_to_m_s**2)
     endif
     if (OBC%ntr == 0) return
-    if (.not. allocated (OBC%tres_x) .or. .not. allocated (OBC%tres_y)) return
+    if (.not. associated (OBC%tres_x) .or. .not. associated (OBC%tres_y)) return
     do m=1,OBC%ntr
       write(var_num,'(I3.3)') m
       call uvchksum("radiation_OBCs: OBC%tres_[xy]_"//var_num, OBC%tres_x(:,:,:,m), OBC%tres_y(:,:,:,m), G%HI, &
@@ -5052,7 +5057,9 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
   integer :: i, j
   integer :: l_seg
   logical :: fatal_error = .False.
-  real    :: min_depth ! The minimum depth for ocean points [Z ~> m]
+  real    :: min_depth  ! The minimum depth for ocean points [Z ~> m]
+  real    :: mask_depth ! The masking depth for ocean points [Z ~> m]
+  real    :: Dmask      ! The depth for masking in the same units as G%bathyT [Z ~> m].
   integer, parameter :: cin = 3, cout = 4, cland = -1, cedge = -2
   character(len=256) :: mesg    ! Message for error messages.
   real, allocatable, dimension(:,:) :: color, color2  ! For sorting inside from outside,
@@ -5062,6 +5069,12 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
 
   call get_param(param_file, mdl, "MINIMUM_DEPTH", min_depth, &
                  units="m", default=0.0, scale=US%m_to_Z, do_not_log=.true.)
+  call get_param(param_file, mdl, "MASKING_DEPTH", mask_depth, &
+                 units="m", default=-9999.0, scale=US%m_to_Z, do_not_log=.true.)
+
+  Dmask = mask_depth
+  if (mask_depth == -9999.0*US%m_to_Z) Dmask = min_depth
+
   ! The reference depth on a dyn_horgrid is 0, otherwise would need:  min_depth = min_depth - G%Z_ref
 
   allocate(color(G%isd:G%ied, G%jsd:G%jed), source=0.0)
@@ -5152,7 +5165,7 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
           &"the masking of the outside grid points.")') i, j
       call MOM_error(WARNING,"MOM mask_outside_OBCs: "//mesg, all_print=.true.)
     endif
-    if (color(i,j) == cout) G%bathyT(i,j) = min_depth
+    if (color(i,j) == cout) G%bathyT(i,j) = Dmask
   enddo ; enddo
   if (fatal_error) call MOM_error(FATAL, &
       "MOM_open_boundary: inconsistent OBC segments.")
@@ -5454,8 +5467,8 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
         if (G%mask2dT(I+ishift,j) == 0.0) cycle
         ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
         do m=1,segment%tr_Reg%ntseg
-          ntr_id = segment%tr_reg%Tr(m)%ntr_index
-          fd_id = segment%tr_reg%Tr(m)%fd_index
+          ntr_id = segment%tr_Reg%Tr(m)%ntr_index
+          fd_id = segment%tr_Reg%Tr(m)%fd_index
           if (fd_id == -1) then
             resrv_lfac_out = 1.0
             resrv_lfac_in  = 1.0
@@ -5480,7 +5493,7 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
                               ((1.0-a_out+a_in)*segment%tr_Reg%Tr(m)%tres(I,j,k)+ &
                               ((u_L_out+a_out)*Reg%Tr(ntr_id)%t(I+ishift,j,k) - &
                                (u_L_in+a_in)*segment%tr_Reg%Tr(m)%t(I,j,k)))
-            if (allocated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
+            if (associated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
           enddo ; endif
         enddo
       enddo
@@ -5498,8 +5511,8 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
         if (G%mask2dT(i,j+jshift) == 0.0) cycle
         ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
         do m=1,segment%tr_Reg%ntseg
-          ntr_id = segment%tr_reg%Tr(m)%ntr_index
-          fd_id = segment%tr_reg%Tr(m)%fd_index
+          ntr_id = segment%tr_Reg%Tr(m)%ntr_index
+          fd_id = segment%tr_Reg%Tr(m)%fd_index
           if (fd_id == -1) then
             resrv_lfac_out = 1.0
             resrv_lfac_in  = 1.0
@@ -5520,7 +5533,7 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
                               ((1.0-a_out+a_in)*segment%tr_Reg%Tr(m)%tres(i,J,k) + &
                               ((v_L_out+a_out)*Reg%Tr(ntr_id)%t(i,J+jshift,k) - &
                                (v_L_in+a_in)*segment%tr_Reg%Tr(m)%t(i,J,k)))
-            if (allocated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
+            if (associated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
           enddo ; endif
         enddo
       enddo
@@ -5596,7 +5609,7 @@ subroutine remap_OBC_fields(G, GV, h_old, h_new, OBC, PCM_cell)
 
           ! Update tracer concentrations
           segment%tr_Reg%Tr(m)%tres(I,j,:) = tr_column(:)
-          if (allocated(OBC%tres_x)) then ; do k=1,nz
+          if (associated(OBC%tres_x)) then ; do k=1,nz
             OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
           enddo ; endif
 
@@ -5663,7 +5676,7 @@ subroutine remap_OBC_fields(G, GV, h_old, h_new, OBC, PCM_cell)
 
           ! Update tracer concentrations
           segment%tr_Reg%Tr(m)%tres(i,J,:) = tr_column(:)
-          if (allocated(OBC%tres_y)) then ; do k=1,nz
+          if (associated(OBC%tres_y)) then ; do k=1,nz
             OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
           enddo ; endif
 
@@ -6046,12 +6059,12 @@ subroutine rotate_OBC_init(OBC_in, G, GV, US, param_file, tv, restart_CS, OBC)
                  "If true, Temperature and salinity are used as state "//&
                  "variables.", default=.true., do_not_log=.true.)
 
+  if (use_temperature) &
+    call fill_temp_salt_segments(G, GV, US, OBC, tv)
+
   do l = 1, OBC%number_of_segments
     call rotate_OBC_segment_data(OBC_in%segment(l), OBC%segment(l), G%HI%turns)
   enddo
-
-  if (use_temperature) &
-    call fill_temp_salt_segments(G, GV, US, OBC, tv)
 
   call open_boundary_init(G, GV, US, param_file, OBC, restart_CS)
 end subroutine rotate_OBC_init
@@ -6075,6 +6088,14 @@ subroutine rotate_OBC_segment_data(segment_in, segment, turns)
     segment%field(n)%handle = segment_in%field(n)%handle
     segment%field(n)%dz_handle = segment_in%field(n)%dz_handle
 
+    if (allocated(segment_in%field(n)%buffer_dst)) then
+      call allocate_rotated_array(segment_in%field(n)%buffer_dst, &
+          lbound(segment_in%field(n)%buffer_dst), turns, &
+          segment%field(n)%buffer_dst)
+      call rotate_array(segment_in%field(n)%buffer_dst, turns, &
+          segment%field(n)%buffer_dst)
+    endif
+
     if (modulo(turns, 2) /= 0) then
       select case (segment_in%field(n)%name)
         case ('U')
@@ -6085,6 +6106,7 @@ subroutine rotate_OBC_segment_data(segment_in, segment, turns)
           segment%field(n)%name = 'Vphase'
         case ('V')
           segment%field(n)%name = 'U'
+          segment%field(n)%buffer_dst(:,:,:) = -segment%field(n)%buffer_dst(:,:,:)
         case ('Vamp')
           segment%field(n)%name = 'Uamp'
         case ('Vphase')
@@ -6120,6 +6142,93 @@ subroutine rotate_OBC_segment_data(segment_in, segment, turns)
 
     segment%field(n)%value = segment_in%field(n)%value
   enddo
+
+  if (allocated(segment_in%SSH)) &
+        call rotate_array(segment_in%SSH, turns, segment%SSH)
+  if (allocated(segment_in%cg)) &
+       call rotate_array(segment_in%cg, turns, segment%cg)
+  if (allocated(segment_in%htot)) &
+       call rotate_array(segment_in%htot, turns, segment%htot)
+  if (allocated(segment_in%dztot)) &
+       call rotate_array(segment_in%dztot, turns, segment%dztot)
+  if (allocated(segment_in%h)) &
+       call rotate_array(segment_in%h, turns, segment%h)
+  if (allocated(segment_in%normal_vel)) &
+       call rotate_array(segment_in%normal_vel, turns, segment%normal_vel)
+  if (allocated(segment_in%normal_trans)) &
+       call rotate_array(segment_in%normal_trans, turns, segment%normal_trans)
+  if (allocated(segment_in%normal_vel_bt)) &
+       call rotate_array(segment_in%normal_vel_bt, turns, segment%normal_vel_bt)
+  if (allocated(segment_in%tangential_vel)) &
+       call rotate_array(segment_in%tangential_vel, turns, segment%tangential_vel)
+  if (allocated(segment_in%tangential_grad)) &
+       call rotate_array(segment_in%tangential_grad, turns, segment%tangential_grad)
+  if (allocated(segment_in%grad_normal)) &
+       call rotate_array(segment_in%grad_normal, turns, segment%grad_normal)
+  if (allocated(segment_in%grad_tan)) &
+       call rotate_array(segment_in%grad_tan, turns, segment%grad_tan)
+  if (allocated(segment_in%grad_gradient)) &
+       call rotate_array(segment_in%grad_gradient, turns, segment%grad_gradient)
+  if (allocated(segment_in%rx_norm_rad)) &
+       call rotate_array(segment_in%rx_norm_rad, turns, segment%ry_norm_rad)
+  if (allocated(segment_in%ry_norm_rad)) &
+       call rotate_array(segment_in%ry_norm_rad, turns, segment%rx_norm_rad)
+  if (allocated(segment_in%rx_norm_obl)) &
+       call rotate_array(segment_in%rx_norm_obl, turns, segment%ry_norm_obl)
+  if (allocated(segment_in%ry_norm_obl)) &
+       call rotate_array(segment_in%ry_norm_obl, turns, segment%rx_norm_obl)
+  if (allocated(segment_in%cff_normal)) &
+       call rotate_array(segment_in%cff_normal, turns, segment%cff_normal)
+  if (allocated(segment_in%nudged_normal_vel)) &
+       call rotate_array(segment_in%nudged_normal_vel, turns, segment%nudged_normal_vel)
+  if (allocated(segment_in%nudged_tangential_vel)) &
+       call rotate_array(segment_in%nudged_tangential_vel, turns, segment%nudged_tangential_vel)
+  if (allocated(segment_in%nudged_tangential_grad)) &
+       call rotate_array(segment_in%nudged_tangential_grad, turns, segment%nudged_tangential_grad)
+  if (associated(segment_in%tr_Reg)) then
+    do n = 1, segment_in%tr_Reg%ntseg
+      call rotate_array(segment_in%tr_Reg%tr(n)%tres, turns, segment%tr_Reg%tr(n)%tres)
+      ! Testing this to see if it works for contant tres values. Probably wrong otherwise.
+      segment%tr_Reg%Tr(n)%is_initialized=.true.
+    enddo
+  endif
+
+  ! Only doing this here for 1 turns, get flow directed in the opposite direction.
+  ! Currents that are now E_W were N_S and the turns should change their sign.
+  if (turns == 1 .and. segment%is_E_or_W) then
+    if (allocated(segment_in%normal_vel)) &
+          segment%normal_vel(:,:,:) = - segment%normal_vel(:,:,:)
+    if (allocated(segment_in%normal_trans)) &
+          segment%normal_trans(:,:,:) = - segment%normal_trans(:,:,:)
+    if (allocated(segment_in%normal_vel_bt)) &
+          segment%normal_vel_bt(:,:) = - segment%normal_vel_bt(:,:)
+    if (allocated(segment_in%tangential_vel)) &
+          segment%tangential_vel(:,:,:) = - segment%tangential_vel(:,:,:)
+    if (allocated(segment_in%tangential_grad)) &
+          segment%tangential_grad(:,:,:) = - segment%tangential_grad(:,:,:)
+    if (allocated(segment_in%grad_normal)) &
+          segment%grad_normal(:,:,:) = - segment%grad_normal(:,:,:)
+    if (allocated(segment_in%grad_tan)) &
+          segment%grad_tan(:,:,:) = - segment%grad_tan(:,:,:)
+    if (allocated(segment_in%grad_gradient)) &
+          segment%grad_gradient(:,:,:) = - segment%grad_gradient(:,:,:)
+    if (allocated(segment%rx_norm_rad)) &
+          segment%rx_norm_rad(:,:,:) = - segment%rx_norm_rad(:,:,:)
+    if (allocated(segment%ry_norm_rad)) &
+          segment%ry_norm_rad(:,:,:) = - segment%ry_norm_rad(:,:,:)
+    if (allocated(segment%rx_norm_obl)) &
+          segment%rx_norm_obl(:,:,:) = - segment%rx_norm_obl(:,:,:)
+    if (allocated(segment%ry_norm_obl)) &
+          segment%ry_norm_obl(:,:,:) = - segment%ry_norm_obl(:,:,:)
+    if (allocated(segment_in%cff_normal)) &
+          segment%cff_normal(:,:,:) = - segment%cff_normal(:,:,:)
+    if (allocated(segment_in%nudged_normal_vel)) &
+          segment%nudged_normal_vel(:,:,:) = - segment%nudged_normal_vel(:,:,:)
+    if (allocated(segment_in%nudged_tangential_vel)) &
+          segment%nudged_tangential_vel(:,:,:) = - segment%nudged_tangential_vel(:,:,:)
+    if (allocated(segment_in%nudged_tangential_grad)) &
+          segment%nudged_tangential_grad(:,:,:) = - segment%nudged_tangential_grad(:,:,:)
+  endif
 
   segment%temp_segment_data_exists = segment_in%temp_segment_data_exists
   segment%salt_segment_data_exists = segment_in%salt_segment_data_exists

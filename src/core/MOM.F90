@@ -751,7 +751,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
 
     if (CS%VarMix%use_variable_mixing) then
       call enable_averages(cycle_time, Time_start + real_to_time(US%T_to_s*cycle_time), CS%diag)
-      call calc_resoln_function(h, CS%tv, G, GV, US, CS%VarMix)
+      call calc_resoln_function(h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt)
       call calc_depth_function(G, CS%VarMix)
       call disable_averaging(CS%diag)
     endif
@@ -1899,7 +1899,7 @@ subroutine step_offline(forces, fluxes, sfc_state, Time_start, time_interval, CS
         if (.not. skip_diffusion) then
           if (CS%VarMix%use_variable_mixing) then
             call pass_var(CS%h, G%Domain)
-            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix)
+            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt_offline)
             call calc_depth_function(G, CS%VarMix)
             call calc_slope_functions(CS%h, CS%tv, dt_offline, G, GV, US, CS%VarMix, OBC=CS%OBC)
           endif
@@ -1926,7 +1926,7 @@ subroutine step_offline(forces, fluxes, sfc_state, Time_start, time_interval, CS
         if (.not. skip_diffusion) then
           if (CS%VarMix%use_variable_mixing) then
             call pass_var(CS%h, G%Domain)
-            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix)
+            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt_offline)
             call calc_depth_function(G, CS%VarMix)
             call calc_slope_functions(CS%h, CS%tv, dt_offline, G, GV, US, CS%VarMix, OBC=CS%OBC)
           endif
@@ -2883,6 +2883,26 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     ! reservoirs are used.
     call open_boundary_register_restarts(HI, GV, US, CS%OBC, CS%tracer_Reg, &
                           param_file, restart_CSp, use_temperature)
+    if (turns /= 0) then
+      if (CS%OBC%radiation_BCs_exist_globally) then
+        OBC_in%rx_normal => CS%OBC%rx_normal
+        OBC_in%ry_normal => CS%OBC%ry_normal
+      endif
+      if (CS%OBC%oblique_BCs_exist_globally) then
+        OBC_in%rx_oblique_u => CS%OBC%rx_oblique_u
+        OBC_in%ry_oblique_u => CS%OBC%ry_oblique_u
+        OBC_in%rx_oblique_v => CS%OBC%rx_oblique_v
+        OBC_in%ry_oblique_v => CS%OBC%ry_oblique_v
+        OBC_in%cff_normal_u => CS%OBC%cff_normal_u
+        OBC_in%cff_normal_v => CS%OBC%cff_normal_v
+      endif
+      if (any(CS%OBC%tracer_x_reservoirs_used)) then
+        OBC_in%tres_x => CS%OBC%tres_x
+      endif
+      if (any(CS%OBC%tracer_y_reservoirs_used)) then
+        OBC_in%tres_y => CS%OBC%tres_y
+      endif
+    endif
   endif
 
   if (present(waves_CSp)) then
