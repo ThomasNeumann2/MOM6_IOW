@@ -22,6 +22,9 @@ use MOM_io,            only : slasher
 use MOM_opacity,       only : set_opacity, opacity_CS, extract_optics_slice, extract_optics_fields
 use MOM_opacity,       only : optics_type, optics_nbands, absorbRemainingSW, sumSWoverBands
 use MOM_tracer_flow_control, only : get_chl_from_model, tracer_flow_control_CS
+#ifdef IOW
+use MOM_tracer_flow_control, only : get_opac_from_model
+#endif
 use MOM_unit_scaling,  only : unit_scale_type
 use MOM_variables,     only : thermo_var_ptrs
 use MOM_verticalGrid,  only : verticalGrid_type
@@ -632,8 +635,17 @@ subroutine set_pen_shortwave(optics, fluxes, G, GV, US, CS, opacity, tracer_flow
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G))          :: chl_2d !< Vertically uniform chlorophyll-A concentrations [mg m-3]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: chl_3d !< The chlorophyll-A concentrations of each layer [mg m-3]
+#ifdef IOW
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: opac   !< Opacity real,of each layer [m-1]
+#endif
   character(len=128) :: mesg
   integer :: i, j, is, ie, js, je
+#ifdef IOW
+      ! the integer code for opacity scheme should be defined globaly
+      ! so that we can use ERGOM instead of 5 here
+  integer :: ERGOM
+  ERGOM=5
+#endif
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
 
   if (.not.associated(optics)) return
@@ -661,11 +673,30 @@ subroutine set_pen_shortwave(optics, fluxes, G, GV, US, CS, opacity, tracer_flow
         "The tracer flow control structure must be associated when the model sets "//&
         "the chlorophyll internally in set_pen_shortwave.")
       call get_chl_from_model(chl_3d, G, GV, tracer_flow_CSp)
+#ifdef IOW
+      if (opacity%opacity_scheme == ERGOM) then
+ !     call MOM_error(WARNING, &
+ !        "set_pen_shortwave: calling get_opac_from_model\n")
+      call get_opac_from_model(opac, G, GV, tracer_flow_CSp)
+      endif
+#endif
 
       if (CS%id_chl > 0) call post_data(CS%id_chl, chl_3d(:,:,1), CS%diag)
 
+#ifdef IOW
+ !     call MOM_error(WARNING, &
+ !      "set_pen_shortwave: calling set_opacity(...,opac=opac).\n")
+      if (opacity%opacity_scheme == ERGOM) then
+        call set_opacity(optics, fluxes%sw, fluxes%sw_vis_dir, fluxes%sw_vis_dif, &
+                       fluxes%sw_nir_dir, fluxes%sw_nir_dif, G, GV, US, opacity, chl_3d=chl_3d,opac=opac)
+      else
+        call set_opacity(optics, fluxes%sw, fluxes%sw_vis_dir, fluxes%sw_vis_dif, &
+                       fluxes%sw_nir_dir, fluxes%sw_nir_dif, G, GV, US, opacity, chl_3d=chl_3d)
+      endif
+#else
       call set_opacity(optics, fluxes%sw, fluxes%sw_vis_dir, fluxes%sw_vis_dif, &
                        fluxes%sw_nir_dir, fluxes%sw_nir_dif, G, GV, US, opacity, chl_3d=chl_3d)
+#endif
     endif
   else
     call set_opacity(optics, fluxes%sw, fluxes%sw_vis_dir, fluxes%sw_vis_dif, &

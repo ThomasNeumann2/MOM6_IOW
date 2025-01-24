@@ -77,6 +77,9 @@ implicit none ; private
 public call_tracer_register, tracer_flow_control_init, call_tracer_set_forcing
 public call_tracer_column_fns, call_tracer_surface_state, call_tracer_stocks
 public call_tracer_flux_init, get_chl_from_model, tracer_flow_control_end
+# if defined IOW
+public get_opac_from_model
+# endif
 public call_tracer_register_obc_segments
 
 !> The control structure for orchestrating the calling of tracer packages
@@ -397,6 +400,37 @@ subroutine get_chl_from_model(Chl_array, G, GV, CS)
 
 end subroutine get_chl_from_model
 
+# if defined IOW
+!> This subroutine extracts the opacity from the model state, if possible
+subroutine get_opac_from_model(Opa_array, G, GV, CS)
+  type(ocean_grid_type),        intent(in)  :: G         !< The ocean's grid structure.
+  type(verticalGrid_type),      intent(in)  :: GV        !< The ocean's vertical grid structure.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                                intent(out) :: Opa_array !< The array in which to store the model's
+                                                         !! Chlorophyll-A concentrations [mg m-3].
+  type(tracer_flow_control_CS), pointer     :: CS        !< The control structure returned by a
+                                                         !! previous call to call_tracer_register.
+
+  real,  allocatable, dimension(:,:,:)      :: opac_wa   ! opacity of pure water
+  integer                                   :: i,j,k
+
+  if (CS%use_MOM_generic_tracer) then
+    allocate(opac_wa(SZI_(G),SZJ_(G),SZK_(GV)))
+    call MOM_generic_tracer_get('opacity_bio',  'field', Opa_array, CS%MOM_generic_tracer_CSp)
+    call MOM_generic_tracer_get('opacity_water','field', opac_wa,   CS%MOM_generic_tracer_CSp)
+    do k=1, GV%ke; do j=G%jsd, G%jed; do i=G%isd, G%ied
+       Opa_array(i,j,k) = Opa_array(i,j,k)+opac_wa(i,j,k)
+    enddo; enddo; enddo
+    deallocate(opac_wa)
+  else
+    call MOM_error(FATAL, "get_opac_from_model was called in a configuration "// &
+             "that is unable to provide a sensible model-based value.\n"// &
+             "CS%use_MOM_generic_tracer is false and no other viable options are on.")
+  endif
+
+end subroutine get_opac_from_model
+# endif
+
 !> This subroutine calls the individual tracer modules' subroutines to
 !! specify or read quantities related to their surface forcing.
 subroutine call_tracer_set_forcing(sfc_state, fluxes, day_start, day_interval, G, US, Rho0, CS)
@@ -429,7 +463,12 @@ end subroutine call_tracer_set_forcing
 
 !> This subroutine calls all registered tracer column physics subroutines.
 subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, mld, dt, G, GV, US, tv, optics, CS, &
+#ifdef IOW
+                                  debug, KPP_CSp, nonLocalTrans, evap_CFL_limit, minimum_forcing_depth, h_BL, &
+                                  KdBio, tau_bot)
+#else
                                   debug, KPP_CSp, nonLocalTrans, evap_CFL_limit, minimum_forcing_depth, h_BL)
+#endif
   type(ocean_grid_type),                 intent(in) :: G      !< The ocean's grid structure.
   type(verticalGrid_type),               intent(in) :: GV     !< The ocean's vertical grid structure.
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in) :: h_old !< Layer thickness before entrainment
@@ -465,6 +504,10 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, mld, dt, G, GV, 
   real,                        optional, intent(in) :: minimum_forcing_depth !< The smallest depth over
                                                               !! which fluxes can be applied [H ~> m or kg m-2]
   real, dimension(:,:),        optional, pointer    :: h_BL   !< Thickness of active mixing layer [H ~> m or kg m-2]
+#ifdef IOW
+  real, dimension(G%isd:G%ied,G%jsd:G%jed,1:GV%ke+1),optional, intent(in) :: KdBio
+  real, dimension(G%isd:G%ied,G%jsd:G%jed),          optional, intent(in) :: tau_bot
+#endif
 
   ! Local variables
   real :: Hbl(SZI_(G),SZJ_(G))    !< Boundary layer thickness [H ~> m or kg m-2]
@@ -541,7 +584,11 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, mld, dt, G, GV, 
       call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, mld, dt, &
                                              G, GV, US, CS%MOM_generic_tracer_CSp, tv, optics, &
                                              evap_CFL_limit=evap_CFL_limit, &
+#ifdef IOW
+                                             minimum_forcing_depth=minimum_forcing_depth, KdBio=KdBio, tau_bot=tau_bot)
+#else
                                              minimum_forcing_depth=minimum_forcing_depth)
+#endif
     endif
     if (CS%use_pseudo_salt_tracer) &
       call pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, &
@@ -611,7 +658,12 @@ subroutine call_tracer_column_fns(h_old, h_new, ea, eb, fluxes, mld, dt, G, GV, 
             "has not been written to permit dimensionsal rescaling.  Set all 4 of the "//&
             "[QRZT]_RESCALE_POWER parameters to 0.")
       call MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, mld, dt, &
+#ifdef IOW
+                                     G, GV, US, CS%MOM_generic_tracer_CSp, tv, optics, &
+                                     KdBio=KdBio)
+#else
                                      G, GV, US, CS%MOM_generic_tracer_CSp, tv, optics)
+#endif
     endif
     if (CS%use_pseudo_salt_tracer) &
       call pseudo_salt_tracer_column_physics(h_old, h_new, ea, eb, fluxes, dt, &

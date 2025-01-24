@@ -1382,6 +1382,9 @@ subroutine post_data_2d(diag_field_id, field, diag_cs, is_static, mask)
 
   if (id_clock_diag_mediator>0) call cpu_clock_begin(id_clock_diag_mediator)
 
+#ifdef IOW
+  if (diag_field_id .gt. -1) then
+#endif
   ! Iterate over list of diag 'variants' (e.g. CMOR aliases) and post each.
   call assert(diag_field_id < diag_cs%next_free_diag_id, &
               'post_data_2d: Unregistered diagnostic id')
@@ -1390,6 +1393,9 @@ subroutine post_data_2d(diag_field_id, field, diag_cs, is_static, mask)
     call post_data_2d_low(diag, field, diag_cs, is_static, mask)
     diag => diag%next
   enddo
+#ifdef IOW
+  endif
+#endif
 
   if (id_clock_diag_mediator>0) call cpu_clock_end(id_clock_diag_mediator)
 end subroutine post_data_2d

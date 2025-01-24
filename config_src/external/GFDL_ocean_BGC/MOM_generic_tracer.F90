@@ -461,7 +461,11 @@ contains
   !! CFCs are relatively simple, as they are passive tracers. with only a surface
   !! flux as a source.
   subroutine MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, Hml, dt, G, GV, US, CS, tv, optics, &
+#ifdef IOW
+        evap_CFL_limit, minimum_forcing_depth, KdBio, tau_bot)
+#else
         evap_CFL_limit, minimum_forcing_depth)
+#endif
     type(ocean_grid_type),   intent(in) :: G     !< The ocean's grid structure
     type(verticalGrid_type), intent(in) :: GV    !< The ocean's vertical grid structure
     real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
@@ -490,6 +494,10 @@ contains
                                                  !   Stored previously in diabatic CS.
     ! The arguments to this subroutine are redundant in that
     !     h_new(k) = h_old(k) + ea(k) - eb(k-1) + eb(k) - ea(k+1)
+#ifdef IOW
+    real,  dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), optional, intent(in) :: KdBio
+    real,  Dimension(SZI_(G),SZJ_(G)),            optional, intent(in) :: tau_bot
+#endif
 
     ! Local variables
     character(len=128), parameter :: sub_name = 'MOM_generic_tracer_column_physics'
@@ -575,6 +583,7 @@ contains
     !
     !Calculate tendencies (i.e., field changes at dt) from the sources / sinks
     !
+#ifndef IOW
     if ((G%US%L_to_m == 1.0) .and. (G%US%s_to_T == 1.0) .and. (G%US%Z_to_m == 1.0) .and. &
         (G%US%Q_to_J_kg == 1.0) .and. (G%US%RZ_to_kg_m2 == 1.0) .and. &
         (US%C_to_degC == 1.0) .and. (US%S_to_ppt == 1.0)) then
@@ -603,6 +612,40 @@ contains
                frunoff=G%US%RZ_T_to_kg_m2s*fluxes%frunoff(:,:), sosga=sosga)
       endif
     endif
+#else
+! TN provide additional arguments for generic_ERGOM
+     if ((G%US%L_to_m == 1.0) .and. (G%US%s_to_T == 1.0) .and. (G%US%Z_to_m == 1.0) .and. &
+         (G%US%Q_to_J_kg == 1.0) .and. (G%US%RZ_to_kg_m2 == 1.0) .and. &
+         (US%C_to_degC == 1.0) .and. (US%S_to_ppt == 1.0)) then
+       ! Avoid unnecessary copies when no unit conversion is needed.
+       call generic_tracer_source(tv%T, tv%S, rho_dzt, dzt, G%geoLonT, G%GeoLatT, dz_ml, G%isd, G%jsd, 1, dt, &
+               G%areaT, get_diag_time_end(CS%diag), &
+               optics%nbands, optics%max_wavelength_band, optics%sw_pen_band, optics%opacity_band, &
+               internal_heat=tv%internal_heat, frunoff=fluxes%frunoff, sosga=sosga, &
+               current_wave_stress=tau_bot,diff_cbt=KdBio)
+     else
+       if(associated(tv%internal_heat)) then
+         call generic_tracer_source(US%C_to_degC*tv%T, US%S_to_ppt*tv%S, rho_dzt, dzt, G%geoLonT, G%GeoLatT, &
+               dz_ml, G%isd, G%jsd, 1, dt, &
+               G%US%L_to_m**2*G%areaT(:,:), get_diag_time_end(CS%diag), &
+               optics%nbands, optics%max_wavelength_band, &
+               sw_pen_band=G%US%QRZ_T_to_W_m2*optics%sw_pen_band(:,:,:), &
+               opacity_band=G%US%m_to_Z*optics%opacity_band(:,:,:,:), &
+               internal_heat=G%US%RZ_to_kg_m2*US%C_to_degC*tv%internal_heat(:,:), &
+               frunoff=G%US%RZ_T_to_kg_m2s*fluxes%frunoff(:,:), sosga=sosga, &
+               current_wave_stress=tau_bot,diff_cbt=KdBio)
+       else
+         call generic_tracer_source(US%C_to_degC*tv%T, US%S_to_ppt*tv%S, rho_dzt, dzt, G%geoLonT, G%GeoLatT, &
+               dz_ml, G%isd, G%jsd, 1, dt, &
+               G%US%L_to_m**2*G%areaT(:,:), get_diag_time_end(CS%diag), &
+               optics%nbands, optics%max_wavelength_band, &
+               sw_pen_band=G%US%QRZ_T_to_W_m2*optics%sw_pen_band(:,:,:), &
+               opacity_band=G%US%m_to_Z*optics%opacity_band(:,:,:,:), &
+               frunoff=G%US%RZ_T_to_kg_m2s*fluxes%frunoff(:,:), sosga=sosga, &
+               current_wave_stress=tau_bot,diff_cbt=KdBio)
+       endif
+     endif
+#endif
 
     ! This uses applyTracerBoundaryFluxesInOut to handle the change in tracer due to freshwater fluxes
     ! usually in ALE mode
