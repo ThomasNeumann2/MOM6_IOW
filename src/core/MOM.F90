@@ -751,7 +751,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
 
     if (CS%VarMix%use_variable_mixing) then
       call enable_averages(cycle_time, Time_start + real_to_time(US%T_to_s*cycle_time), CS%diag)
-      call calc_resoln_function(h, CS%tv, G, GV, US, CS%VarMix)
+      call calc_resoln_function(h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt)
       call calc_depth_function(G, CS%VarMix)
       call disable_averaging(CS%diag)
     endif
@@ -986,7 +986,11 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       do j=js,je ; do i=is,ie
         CS%ssh_rint(i,j) = CS%ssh_rint(i,j) + dt*ssh(i,j)
       enddo ; enddo
-      if (CS%IDs%id_ssh_inst > 0) call post_data(CS%IDs%id_ssh_inst, ssh, CS%diag)
+      if (CS%IDs%id_ssh_inst > 0) then
+        call enable_averages(dt, Time_local, CS%diag)
+        call post_data(CS%IDs%id_ssh_inst, ssh, CS%diag)
+        call disable_averaging(CS%diag)
+      endif
       call cpu_clock_end(id_clock_dynamics)
     endif
 
@@ -1279,6 +1283,18 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   endif ! -------------------------------------------------- end SPLIT
 
+  if (CS%use_particles .and. CS%do_dynamics .and. (.not. CS%use_uh_particles)) then
+    if (CS%thickness_diffuse_first) call MOM_error(WARNING,"particles_run: "//&
+      "Thickness_diffuse_first is true and use_uh_particles is false. "//&
+      "This is usually a bad combination.")
+    !Run particles using unweighted velocity
+    call particles_run(CS%particles, Time_local, CS%u, CS%v, CS%h, &
+                       CS%tv, dt, CS%use_uh_particles)
+    call particles_to_z_space(CS%particles, h)
+  endif
+
+
+
   ! Update the model's current to reflect wind-wave growth
   if (Waves%Stokes_DDT .and. (.not.Waves%Passive_Stokes_DDT)) then
     do J=jsq,jeq ; do i=is,ie
@@ -1364,23 +1380,21 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   endif
   call disable_averaging(CS%diag)
 
+  ! Advance the dynamics time by dt.
+  CS%t_dyn_rel_adv = CS%t_dyn_rel_adv + dt
+
   if (CS%use_particles .and. CS%do_dynamics .and. CS%use_uh_particles) then
     !Run particles using thickness-weighted velocity
     call particles_run(CS%particles, Time_local, CS%uhtr, CS%vhtr, CS%h, &
-        CS%tv, CS%use_uh_particles)
-  elseif (CS%use_particles .and. CS%do_dynamics) then
-    !Run particles using unweighted velocity
-    call particles_run(CS%particles, Time_local, CS%u, CS%v, CS%h, &
-                       CS%tv, CS%use_uh_particles)
+        CS%tv, CS%t_dyn_rel_adv, CS%use_uh_particles)
   endif
 
-
-  ! Advance the dynamics time by dt.
-  CS%t_dyn_rel_adv = CS%t_dyn_rel_adv + dt
   CS%n_dyn_steps_in_adv = CS%n_dyn_steps_in_adv + 1
   if (CS%alternate_first_direction) then
     call set_first_direction(G, MODULO(G%first_direction+1,2))
     CS%first_dir_restart = real(G%first_direction)
+  elseif (CS%use_particles .and. CS%do_dynamics .and. (.not.CS%use_uh_particles)) then
+    call particles_to_k_space(CS%particles, h)
   endif
   CS%t_dyn_rel_thermo = CS%t_dyn_rel_thermo + dt
   if (abs(CS%t_dyn_rel_thermo) < 1e-6*dt) CS%t_dyn_rel_thermo = 0.0
@@ -1918,7 +1932,7 @@ subroutine step_offline(forces, fluxes, sfc_state, Time_start, time_interval, CS
         if (.not. skip_diffusion) then
           if (CS%VarMix%use_variable_mixing) then
             call pass_var(CS%h, G%Domain)
-            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix)
+            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt_offline)
             call calc_depth_function(G, CS%VarMix)
             call calc_slope_functions(CS%h, CS%tv, dt_offline, G, GV, US, CS%VarMix, OBC=CS%OBC)
           endif
@@ -1945,7 +1959,7 @@ subroutine step_offline(forces, fluxes, sfc_state, Time_start, time_interval, CS
         if (.not. skip_diffusion) then
           if (CS%VarMix%use_variable_mixing) then
             call pass_var(CS%h, G%Domain)
-            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix)
+            call calc_resoln_function(CS%h, CS%tv, G, GV, US, CS%VarMix, CS%MEKE, dt_offline)
             call calc_depth_function(G, CS%VarMix)
             call calc_slope_functions(CS%h, CS%tv, dt_offline, G, GV, US, CS%VarMix, OBC=CS%OBC)
           endif
@@ -4033,7 +4047,7 @@ subroutine extract_surface_state(CS, sfc_state_in)
     numberOfErrors=0 ! count number of errors
     do j=js,je ; do i=is,ie
       if (G%mask2dT(i,j)>0.) then
-        localError = sfc_state%sea_lev(i,j) <= -G%bathyT(i,j) - G%Z_ref &
+        localError = sfc_state%sea_lev(i,j) < -G%bathyT(i,j) - G%Z_ref &
                 .or. sfc_state%sea_lev(i,j) >=  CS%bad_val_ssh_max  &
                 .or. sfc_state%sea_lev(i,j) <= -CS%bad_val_ssh_max  &
                 .or. sfc_state%sea_lev(i,j) + G%bathyT(i,j) + G%Z_ref < CS%bad_val_col_thick
@@ -4060,7 +4074,7 @@ subroutine extract_surface_state(CS, sfc_state_in)
               write(msg(1:240),'(2(a,i4,1x),4(a,f8.3,1x),6(a,es11.4))') &
                 'Extreme surface sfc_state detected: i=',ig,'j=',jg, &
                 'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
-                'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
+                'x=',G%gridLonT(ig), 'y=',G%gridLatT(jg), &
                 'D=',US%Z_to_m*(G%bathyT(i,j)+G%Z_ref), 'SSH=',US%Z_to_m*sfc_state%sea_lev(i,j), &
                 'U-=',US%L_T_to_m_s*sfc_state%u(I-1,j), 'U+=',US%L_T_to_m_s*sfc_state%u(I,j), &
                 'V-=',US%L_T_to_m_s*sfc_state%v(i,J-1), 'V+=',US%L_T_to_m_s*sfc_state%v(i,J)
@@ -4166,7 +4180,7 @@ subroutine get_ocean_stocks(CS, mass, heat, salt, on_PE_only)
   if (present(mass)) &
     mass = global_mass_integral(CS%h, CS%G, CS%GV, on_PE_only=on_PE_only)
   if (present(heat)) &
-    heat = CS%US%Q_to_J_kg*CS%tv%C_p * &
+    heat = CS%US%Q_to_J_kg*CS%US%RZL2_to_kg * CS%tv%C_p * &
            global_mass_integral(CS%h, CS%G, CS%GV, CS%tv%T, on_PE_only=on_PE_only, tmp_scale=CS%US%C_to_degC)
   if (present(salt)) &
     salt = 1.0e-3 * global_mass_integral(CS%h, CS%G, CS%GV, CS%tv%S, on_PE_only=on_PE_only, unscale=CS%US%S_to_ppt)

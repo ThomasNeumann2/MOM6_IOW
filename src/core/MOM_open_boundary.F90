@@ -320,7 +320,8 @@ type, public :: ocean_OBC_type
   logical :: add_tide_constituents = .false.          !< If true, add tidal constituents to the boundary elevation
                                                       !! and velocity. Will be set to true if n_tide_constituents > 0.
   character(len=2), allocatable, dimension(:) :: tide_names  !< Names of tidal constituents to add to the boundary data.
-  real, allocatable, dimension(:) :: tide_frequencies !< Angular frequencies of chosen tidal constituents [T-1 ~> s-1].
+  real, allocatable, dimension(:) :: tide_frequencies !< Angular frequencies of chosen tidal
+                                                      !! constituents [rad T-1 ~> rad s-1].
   real, allocatable, dimension(:) :: tide_eq_phases   !< Equilibrium phases of chosen tidal constituents [rad].
   real, allocatable, dimension(:) :: tide_fn          !< Amplitude modulation of boundary tides by nodal cycle [nondim].
   real, allocatable, dimension(:) :: tide_un          !< Phase modulation of boundary tides by nodal cycle [rad].
@@ -448,9 +449,13 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   character(len=200) :: config1          ! String for OBC_USER_CONFIG
   real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
+!#ifdef IOW ! OBC Bug
   logical :: check_reconstruction, check_remapping, force_bounds_in_subcell
-  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
   character(len=64)  :: remappingScheme
+!#else
+!  logical :: check_remapping, force_bounds_in_subcell
+!#endif
+  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
 
@@ -676,10 +681,12 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     enddo
 
     call get_param(param_file, mdl, "REMAPPING_SCHEME", OBC%remappingScheme, &
+          default=remappingDefaultScheme, do_not_log=.true.)
+    call get_param(param_file, mdl, "OBC_REMAPPING_SCHEME", OBC%remappingScheme, &
           "This sets the reconstruction scheme used "//&
-          "for vertical remapping for all variables. "//&
+          "for OBC vertical remapping for all variables. "//&
           "It can be one of the following schemes: \n"//&
-          trim(remappingSchemesDoc), default=remappingDefaultScheme,do_not_log=.true.)
+          trim(remappingSchemesDoc), default=OBC%remappingScheme)
     call get_param(param_file, mdl, "FATAL_CHECK_RECONSTRUCTIONS", OBC%check_reconstruction, &
           "If true, cell-by-cell reconstructions are checked for "//&
           "consistency and if non-monotonicity or an inconsistency is "//&
@@ -704,10 +711,13 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date)
+    call get_param(param_file, mdl, "REMAPPING_USE_OM4_SUBCELLS", OBC%om4_remap_via_sub_cells, &
+                   do_not_log=.true., default=.true.)
+
     call get_param(param_file, mdl, "OBC_REMAPPING_USE_OM4_SUBCELLS", OBC%om4_remap_via_sub_cells, &
                  "If true, use the OM4 remapping-via-subcells algorithm for neutral diffusion. "//&
                  "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
-                 "We recommend setting this option to false.", default=.true.)
+                 "We recommend setting this option to false.", default=OBC%om4_remap_via_sub_cells)
 
   endif ! OBC%number_of_segments > 0
 
@@ -1164,26 +1174,30 @@ subroutine initialize_obc_tides(OBC, US, param_file)
   type(astro_longitudes) :: nodal_longitudes  !< Solar and lunar longitudes for tidal forcing
   type(time_type) :: nodal_time               !< Model time to calculate nodal modulation for.
   integer :: c                                !< Index to tidal constituent.
+  logical :: tides                            !< True if astronomical tides are also used.
 
   call get_param(param_file, mdl, "OBC_TIDE_CONSTITUENTS", tide_constituent_str, &
       "Names of tidal constituents being added to the open boundaries.", &
       fail_if_missing=.true.)
 
-  call get_param(param_file, mdl, "OBC_TIDE_ADD_EQ_PHASE", OBC%add_eq_phase, &
+  call get_param(param_file, mdl, "TIDES", tides, &
+      "If true, apply tidal momentum forcing.", default=.false., do_not_log=.true.)
+
+  call get_param(param_file, mdl, "TIDE_USE_EQ_PHASE", OBC%add_eq_phase, &
       "If true, add the equilibrium phase argument to the specified tidal phases.", &
-      default=.false., fail_if_missing=.false.)
+      old_name="OBC_TIDE_ADD_EQ_PHASE", default=.false., do_not_log=tides)
 
-  call get_param(param_file, mdl, "OBC_TIDE_ADD_NODAL", OBC%add_nodal_terms, &
+  call get_param(param_file, mdl, "TIDE_ADD_NODAL", OBC%add_nodal_terms, &
       "If true, include 18.6 year nodal modulation in the boundary tidal forcing.", &
-      default=.false.)
+      old_name="OBC_TIDE_ADD_NODAL", default=.false., do_not_log=tides)
 
-  call get_param(param_file, mdl, "OBC_TIDE_REF_DATE", tide_ref_date, &
+  call get_param(param_file, mdl, "TIDE_REF_DATE", tide_ref_date, &
       "Reference date to use for tidal calculations and equilibrium phase.", &
-      fail_if_missing=.true.)
+      old_name="OBC_TIDE_REF_DATE", defaults=(/0, 0, 0/), do_not_log=tides)
 
-  call get_param(param_file, mdl, "OBC_TIDE_NODAL_REF_DATE", nodal_ref_date, &
+  call get_param(param_file, mdl, "TIDE_NODAL_REF_DATE", nodal_ref_date, &
       "Fixed reference date to use for nodal modulation of boundary tides.", &
-      fail_if_missing=.false., default=0)
+      old_name="OBC_TIDE_NODAL_REF_DATE", defaults=(/0, 0, 0/), do_not_log=tides)
 
   if (.not. OBC%add_eq_phase) then
     ! If equilibrium phase argument is not added, the input phases
@@ -1195,7 +1209,7 @@ subroutine initialize_obc_tides(OBC, US, param_file)
   read(tide_constituent_str, *) OBC%tide_names
 
   ! Set reference time (t = 0) for boundary tidal forcing.
-  OBC%time_ref = set_date(tide_ref_date(1), tide_ref_date(2), tide_ref_date(3))
+  OBC%time_ref = set_date(tide_ref_date(1), tide_ref_date(2), tide_ref_date(3), 0, 0, 0)
 
   ! Find relevant lunar and solar longitudes at the reference time
   if (OBC%add_eq_phase) call astro_longitudes_init(OBC%time_ref, OBC%tidal_longitudes)
@@ -1205,7 +1219,7 @@ subroutine initialize_obc_tides(OBC, US, param_file)
   if (OBC%add_nodal_terms) then
     if (sum(nodal_ref_date) /= 0) then
       ! A reference date was provided for the nodal correction
-      nodal_time = set_date(nodal_ref_date(1), nodal_ref_date(2), nodal_ref_date(3))
+      nodal_time = set_date(nodal_ref_date(1), nodal_ref_date(2), nodal_ref_date(3), 0, 0, 0)
       call astro_longitudes_init(nodal_time, nodal_longitudes)
     elseif (OBC%add_eq_phase) then
       ! Astronomical longitudes were already calculated for use in equilibrium phases,
@@ -1230,7 +1244,7 @@ subroutine initialize_obc_tides(OBC, US, param_file)
         "This is only used if TIDES and TIDE_"//trim(OBC%tide_names(c))// &
         " are true, or if OBC_TIDE_N_CONSTITUENTS > 0 and "//trim(OBC%tide_names(c))//&
         " is in OBC_TIDE_CONSTITUENTS.", &
-        units="s-1", default=tidal_frequency(trim(OBC%tide_names(c))), scale=US%T_to_s)
+        units="rad s-1", default=tidal_frequency(trim(OBC%tide_names(c))), scale=US%T_to_s)
 
     ! Find equilibrium phase if needed
     if (OBC%add_eq_phase) then
@@ -1475,7 +1489,7 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, PF, reentrant_y)
                      "Timescales in days for nudging along a segment, "//&
                      "for inflow, then outflow. Setting both to zero should "//&
                      "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., default=0., units="days", scale=86400.0*US%s_to_T)
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
       OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
       OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
       deallocate(tnudge)
@@ -1616,7 +1630,7 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, PF, reentrant_x)
                      "Timescales in days for nudging along a segment, "//&
                      "for inflow, then outflow. Setting both to zero should "//&
                      "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., default=0., units="days", scale=86400.0*US%s_to_T)
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
       OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
       OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
       deallocate(tnudge)
@@ -5053,6 +5067,10 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
   integer :: l_seg
   logical :: fatal_error = .False.
   real    :: min_depth ! The minimum depth for ocean points [Z ~> m]
+!#ifdef IOW ! OBC Bug
+  real    :: mask_depth ! The masking depth for ocean points [Z ~> m]
+  real    :: Dmask      ! The depth for masking in the same units as G%bathyT [Z ~> m].
+!#endif
   integer, parameter :: cin = 3, cout = 4, cland = -1, cedge = -2
   character(len=256) :: mesg    ! Message for error messages.
   real, allocatable, dimension(:,:) :: color, color2  ! For sorting inside from outside,
@@ -5062,6 +5080,13 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
 
   call get_param(param_file, mdl, "MINIMUM_DEPTH", min_depth, &
                  units="m", default=0.0, scale=US%m_to_Z, do_not_log=.true.)
+!#ifdef IOW ! OBC Bug
+  call get_param(param_file, mdl, "MASKING_DEPTH", mask_depth, &
+                 units="m", default=-9999.0, scale=US%m_to_Z, do_not_log=.true.)
+
+  Dmask = mask_depth
+  if (mask_depth == -9999.0*US%m_to_Z) Dmask = min_depth
+!#endif
   ! The reference depth on a dyn_horgrid is 0, otherwise would need:  min_depth = min_depth - G%Z_ref
 
   allocate(color(G%isd:G%ied, G%jsd:G%jed), source=0.0)
@@ -5152,7 +5177,7 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
           &"the masking of the outside grid points.")') i, j
       call MOM_error(WARNING,"MOM mask_outside_OBCs: "//mesg, all_print=.true.)
     endif
-    if (color(i,j) == cout) G%bathyT(i,j) = min_depth
+    if (color(i,j) == cout) G%bathyT(i,j) = Dmask
   enddo ; enddo
   if (fatal_error) call MOM_error(FATAL, &
       "MOM_open_boundary: inconsistent OBC segments.")
@@ -5465,7 +5490,7 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
           endif
           I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
           if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,nz
-            ! Calculate weights. Both a and u_L are nodim. Adding them together has no meaning.
+            ! Calculate weights. Both a and u_L are nondim. Adding them together has no meaning.
             ! However, since they cannot be both non-zero, adding them works like a switch.
             ! When InvLscale_out is 0 and outflow, only interior data is applied to reservoirs
             ! When InvLscale_in is 0 and inflow, only nudged data is applied to reservoirs
