@@ -211,7 +211,7 @@ contains
         call register_tracer(tr_ptr, tr_Reg, param_file, HI, GV, &
                              name=g_tracer_name, longname=longname, units=units, &
 #ifdef IOW
-                             registry_diags=.true.
+                             registry_diags=.true.,
 #else
                              registry_diags=.false., &   !### CHANGE TO TRUE?
 #endif
