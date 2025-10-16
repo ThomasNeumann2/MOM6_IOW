@@ -83,7 +83,6 @@ type, public :: MEKE_CS ; private
                         !! first baroclinic deformation radius.
   logical :: use_old_lscale !< Use the old formula for mixing length scale.
   logical :: use_min_lscale !< Use simple minimum for mixing length scale.
-  logical :: MEKE_positive  !< If true, it guarantees that MEKE will always be >= 0.
   real :: lscale_maxval !< The ceiling on the MEKE mixing length scale when use_min_lscale is true [L ~> m].
   real :: cdrag         !< The bottom drag coefficient for MEKE, times rescaling factors [H L-1 ~> nondim or kg m-3]
   real :: MEKE_BGsrc    !< Background energy source for MEKE [L2 T-3 ~> W kg-1] (= m2 s-3).
@@ -867,13 +866,6 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
     call MOM_error(FATAL,"Invalid method specified for calculating EKE")
   end select
 
-  if (CS%MEKE_positive) then
-    !$OMP parallel do default(shared)
-    do j=js,je ; do i=is,ie
-      MEKE%MEKE(i,j) = MAX(0., MEKE%MEKE(i,j))
-    enddo ; enddo
-  endif
-
   call cpu_clock_begin(CS%id_clock_pass)
   call do_group_pass(CS%pass_MEKE, G%Domain)
   call cpu_clock_end(CS%id_clock_pass)
@@ -1466,9 +1458,6 @@ logical function MEKE_init(Time, G, GV, US, param_file, diag, dbcomms_CS, CS, ME
     call get_param(param_file, mdl, "MEKE_DTSCALE", CS%MEKE_dtScale, &
                    "A scaling factor to accelerate the time evolution of MEKE.", &
                    units="nondim", default=1.0)
-    call get_param(param_file, mdl, "MEKE_POSITIVE", CS%MEKE_positive, &
-                   "If true, it guarantees that MEKE will always be >= 0.", &
-                   default=.false.)
   case("dbclient")
     CS%eke_src = EKE_DBCLIENT
     call ML_MEKE_init(diag, G, US, Time, param_file, dbcomms_CS, CS)
@@ -1721,13 +1710,11 @@ logical function MEKE_init(Time, G, GV, US, param_file, diag, dbcomms_CS, CS, ME
   if (coldStart) CS%initialize = .false.
   if (CS%initialize) call MOM_error(WARNING, &
                        "MEKE_init: Initializing MEKE with a local equilibrium balance.")
-  if (allocated(MEKE%Le)) then
-    if (.not.query_initialized(MEKE%Le, "MEKE_Le", restart_CS)) then
-      !$OMP parallel do default(shared)
-      do j=js,je ; do i=is,ie
-        MEKE%Le(i,j) = sqrt(G%areaT(i,j))
-      enddo ; enddo
-    endif
+  if (.not.query_initialized(MEKE%Le, "MEKE_Le", restart_CS) .and. allocated(MEKE%Le)) then
+    !$OMP parallel do default(shared)
+    do j=js,je ; do i=is,ie
+      MEKE%Le(i,j) = sqrt(G%areaT(i,j))
+    enddo ; enddo
   endif
 
   ! Set up group passes.  In the case of a restart, these fields need a halo update now.
@@ -2008,8 +1995,7 @@ subroutine predict_MEKE(G, US, CS, npts, Time, features_array, MEKE)
 
 end subroutine predict_MEKE
 
-!> Compute average of interface quantities weighted by the thickness of the surrounding
-!! layers [arbitrary]
+!> Compute average of interface quantities weighted by the thickness of the surrounding layers
 real function vertical_average_interface(h, w, h_min)
 
   real, dimension(:), intent(in) :: h  !< Layer Thicknesses [H ~> m or kg m-2]

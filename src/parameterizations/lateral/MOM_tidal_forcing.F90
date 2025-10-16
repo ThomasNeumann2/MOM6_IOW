@@ -9,6 +9,8 @@ use MOM_domains,       only : pass_var
 use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING
 use MOM_file_parser,   only : get_param, log_version, param_file_type
 use MOM_grid,          only : ocean_grid_type
+use MOM_harmonic_analysis, &
+                       only : HA_init, HA_register, harmonic_analysis_CS
 use MOM_io,            only : field_exists, file_exists, MOM_read_data
 use MOM_time_manager,  only : set_date, time_type, time_type_to_real, operator(-)
 use MOM_unit_scaling,  only : unit_scale_type
@@ -43,9 +45,9 @@ type, public :: tidal_forcing_CS ; private
                       !! equilibrium tide. Set to false if providing tidal phases
                       !! that have already been shifted by the
                       !! astronomical/equilibrium argument.
-  real    :: sal_scalar = 0.0 !< The constant of proportionality between self-attraction and
-                      !! loading (SAL) geopotential anomaly and total geopotential geopotential
-                      !! anomalies. This is only used if USE_PREVIOUS_TIDES is true. [nondim].
+  real    :: sal_scalar !< The constant of proportionality between sea surface
+                      !! height (really it should be bottom pressure) anomalies
+                      !! and bottom geopotential anomalies [nondim].
   integer :: nc       !< The number of tidal constituents in use.
   real, dimension(MAX_CONSTITUENTS) :: &
     freq, &           !< The frequency of a tidal constituent [rad T-1 ~> rad s-1].
@@ -233,12 +235,13 @@ end subroutine nodal_fu
 !! while fields like the background viscosities are 2-D arrays.
 !! ALLOC is a macro defined in MOM_memory.h for allocate or nothing with
 !! static memory.
-subroutine tidal_forcing_init(Time, G, US, param_file, CS)
+subroutine tidal_forcing_init(Time, G, US, param_file, CS, HA_CS)
   type(time_type),        intent(in)    :: Time !< The current model time.
   type(ocean_grid_type),  intent(inout) :: G    !< The ocean's grid structure.
   type(unit_scale_type),  intent(in)    :: US   !< A dimensional unit scaling type
   type(param_file_type),  intent(in)    :: param_file !< A structure to parse for run-time parameters.
   type(tidal_forcing_CS), intent(inout) :: CS   !< Tidal forcing control structure
+  type(harmonic_analysis_CS), optional, intent(out) :: HA_CS !< Control structure for harmonic analysis
 
   ! Local variables
   real, dimension(SZI_(G), SZJ_(G)) :: &
@@ -258,11 +261,13 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
                                               !! calculating tidal forcing.
   type(time_type) :: nodal_time               !< Model time to calculate nodal modulation for.
   type(astro_longitudes) :: nodal_longitudes  !< Solar and lunar longitudes for tidal forcing
+  logical :: HA_ssh, HA_ubt, HA_vbt
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_tidal_forcing" ! This module's name.
   character(len=128) :: mesg
   character(len=200) :: tidal_input_files(4*MAX_CONSTITUENTS)
+  real :: tide_sal_scalar_value ! The constant of proportionality with the scalar approximation to SAL [nondim]
   integer :: i, j, c, is, ie, js, je, isd, ied, jsd, jed, nc
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
@@ -357,17 +362,22 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
                  "If true, use the SAL from the previous iteration of the "//&
                  "tides to facilitate convergent iteration. "//&
                  "This is only used if TIDES is true.", default=.false.)
-  if (CS%use_tidal_sal_prev) &
-    call get_param(param_file, mdl, "SAL_SCALAR_VALUE", CS%sal_scalar, "The constant of "//&
-                   "proportionality between self-attraction and loading (SAL) geopotential "//&
-                   "anomaly and barotropic geopotential anomalies. This is only used if "//&
-                   "SAL_SCALAR_APPROX is true or USE_PREVIOUS_TIDES is true.", default=0.0, &
-                   units="m m-1", do_not_log=(.not.CS%use_tidal_sal_prev), &
-                   old_name='TIDE_SAL_SCALAR_VALUE')
+  call get_param(param_file, '', "TIDE_SAL_SCALAR_VALUE", tide_sal_scalar_value, &
+                 units="m m-1", default=0.0, do_not_log=.True.)
+  if (tide_sal_scalar_value/=0.0) &
+    call MOM_error(WARNING, "TIDE_SAL_SCALAR_VALUE is a deprecated parameter. "//&
+                   "Use SAL_SCALAR_VALUE instead." )
+  call get_param(param_file, mdl, "SAL_SCALAR_VALUE", CS%sal_scalar, &
+                 "The constant of proportionality between sea surface "//&
+                 "height (really it should be bottom pressure) anomalies "//&
+                 "and bottom geopotential anomalies. This is only used if "//&
+                 "USE_SAL_SCALAR is true or USE_PREVIOUS_TIDES is true.", &
+                 default=tide_sal_scalar_value, units="m m-1", &
+                 do_not_log=(.not. CS%use_tidal_sal_prev))
 
   if (nc > MAX_CONSTITUENTS) then
-    write(mesg,'("Increase MAX_CONSTITUENTS in MOM_tidal_forcing.F90 to at least ",I0, &
-                &" to accommodate all the registered tidal constituents.")') nc
+    write(mesg,'("Increase MAX_CONSTITUENTS in MOM_tidal_forcing.F90 to at least",I3, &
+                &"to accommodate all the registered tidal constituents.")') nc
     call MOM_error(FATAL, "MOM_tidal_forcing"//mesg)
   endif
 
@@ -561,6 +571,20 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
       CS%tide_un(c) = 0.0
     endif
   enddo
+
+  if (present(HA_CS)) then
+    call HA_init(Time, US, param_file, CS%time_ref, CS%nc, CS%freq, CS%phase0, CS%const_name, &
+                 CS%tide_fn, CS%tide_un, HA_CS)
+    call get_param(param_file, mdl, "HA_SSH", HA_ssh, &
+                   "If true, perform harmonic analysis of sea serface height.", default=.false.)
+    if (HA_ssh) call HA_register('ssh', 'h', HA_CS)
+    call get_param(param_file, mdl, "HA_UBT", HA_ubt, &
+                   "If true, perform harmonic analysis of zonal barotropic velocity.", default=.false.)
+    if (HA_ubt) call HA_register('ubt', 'u', HA_CS)
+    call get_param(param_file, mdl, "HA_VBT", HA_vbt, &
+                   "If true, perform harmonic analysis of meridional barotropic velocity.", default=.false.)
+    if (HA_vbt) call HA_register('vbt', 'v', HA_CS)
+  endif
 
   id_clock_tides = cpu_clock_id('(Ocean tides)', grain=CLOCK_MODULE)
 
