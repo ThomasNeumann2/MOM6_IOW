@@ -530,13 +530,15 @@ subroutine bulkmixedlayer(h_3d, u_3d, v_3d, tv, fluxes, dt, ea, eb, G, GV, US, C
         RmixConst = -0.5*CS%rivermix_depth * GV%g_Earth_Z_T2
         do i=is,ie
           TKE_river(i) = max(0.0, RmixConst * dSpV0_dS(i) * &
-                        (fluxes%lrunoff(i,j) + fluxes%frunoff(i,j)) * S(i,1))
+                        ((fluxes%lrunoff(i,j) + fluxes%frunoff(i,j)) + &
+                         (fluxes%lrunoff_glc(i,j) + fluxes%frunoff_glc(i,j))) * S(i,1))
         enddo
       else
         RmixConst = 0.5*CS%rivermix_depth * GV%g_Earth_Z_T2 * Irho0**2
         do i=is,ie
           TKE_river(i) = max(0.0, RmixConst*dR0_dS(i)* &
-                        (fluxes%lrunoff(i,j) + fluxes%frunoff(i,j)) * S(i,1))
+                        ((fluxes%lrunoff(i,j) + fluxes%frunoff(i,j)) + &
+                         (fluxes%lrunoff_glc(i,j) + fluxes%frunoff_glc(i,j))) * S(i,1))
         enddo
       endif
     else
@@ -1609,8 +1611,8 @@ subroutine find_starting_TKE(htot, h_CA, fluxes, U_star_2d, Conv_En, cTKE, dKE_F
       TKE(i) = (dt*CS%mstar)*((GV%Z_to_H*(U_star*U_Star*U_Star))*exp_kh) + &
                (exp_kh * dKE_conv + nstar_FC*Conv_En(i) + nstar_CA * TKE_CA)
     else
-      ! Note that GV%Z_to_H*U_star**3 = GV%RZ_to_H * US%L_to_Z*fluxes%tau_mag(i,j) * U_star
-      TKE(i) = (dt*CS%mstar) * ((GV%RZ_to_H*US%L_to_Z * fluxes%tau_mag(i,j) * U_star)*exp_kh) + &
+      ! Note that GV%Z_to_H*U_star**3 = GV%RZ_to_H * fluxes%tau_mag(i,j) * U_star
+      TKE(i) = (dt*CS%mstar) * ((GV%RZ_to_H * fluxes%tau_mag(i,j) * U_star)*exp_kh) + &
                (exp_kh * dKE_conv + nstar_FC*Conv_En(i) + nstar_CA * TKE_CA)
     endif
 
@@ -1622,7 +1624,7 @@ subroutine find_starting_TKE(htot, h_CA, fluxes, U_star_2d, Conv_En, cTKE, dKE_F
       if (GV%Boussinesq .or. GV%semi_Boussinesq .or. .not.(associated(fluxes%tau_mag))) then
         wind_TKE_src = CS%mstar*(GV%Z_to_H*U_star*U_Star*U_Star) * diag_wt
       else
-        wind_TKE_src = CS%mstar*(GV%RZ_to_H * US%L_to_Z*fluxes%tau_mag(i,j) * U_star) * diag_wt
+        wind_TKE_src = CS%mstar*(GV%RZ_to_H * fluxes%tau_mag(i,j) * U_star) * diag_wt
       endif
       CS%diag_TKE_wind(i,j) = CS%diag_TKE_wind(i,j) + &
           ( wind_TKE_src + TKE_river(i) * diag_wt )
