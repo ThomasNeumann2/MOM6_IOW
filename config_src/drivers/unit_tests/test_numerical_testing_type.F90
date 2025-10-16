@@ -1,7 +1,7 @@
 program test_numerical_testing_type
 
-use numerical_testing_type, only : numerical_testing_type_unit_tests
+use numerical_testing_type, only : testing_type_unit_test
 
-if (numerical_testing_type_unit_tests(.true.)) stop 1
+if (testing_type_unit_test(.true.)) stop 1
 
 end program test_numerical_testing_type

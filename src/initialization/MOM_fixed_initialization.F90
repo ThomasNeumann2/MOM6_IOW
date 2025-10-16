@@ -24,7 +24,7 @@ use MOM_shared_initialization, only : set_rotation_planetary, set_rotation_beta_
 use MOM_shared_initialization, only : reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 use MOM_shared_initialization, only : read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
 use MOM_shared_initialization, only : set_subgrid_topo_at_vel_from_file
-use MOM_shared_initialization, only : compute_global_grid_integrals
+use MOM_shared_initialization, only : compute_global_grid_integrals, write_ocean_geometry_file
 use MOM_unit_scaling, only : unit_scale_type
 
 use user_initialization, only : user_initialize_topography
@@ -51,17 +51,19 @@ contains
 ! -----------------------------------------------------------------------------
 !> MOM_initialize_fixed sets up time-invariant quantities related to MOM6's
 !!   horizontal grid, bathymetry, and the Coriolis parameter.
-subroutine MOM_initialize_fixed(G, US, OBC, PF)
+subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   type(dyn_horgrid_type),  intent(inout) :: G    !< The ocean's grid structure.
   type(unit_scale_type),   intent(in)    :: US   !< A dimensional unit scaling type
   type(ocean_OBC_type),    pointer       :: OBC  !< Open boundary structure.
   type(param_file_type),   intent(in)    :: PF   !< A structure indicating the open file
                                                  !! to parse for model parameter values.
+  logical,                 intent(in)    :: write_geom !< If true, write grid geometry files.
+  character(len=*),        intent(in)    :: output_dir !< The directory into which to write files.
 
   ! Local variables
   character(len=200) :: inputdir   ! The directory where NetCDF input files are.
   character(len=200) :: config
-  logical            :: read_porous_file, OBC_projection_bug, open_corners, enable_bugs
+  logical            :: read_porous_file
   character(len=40)  :: mdl = "MOM_fixed_initialization" ! This module's name.
   integer :: I, J
   logical :: debug
@@ -91,26 +93,10 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
   call open_boundary_config(G, US, PF, OBC)
 
   ! Make bathymetry consistent with open boundaries
-  call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
-                 default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
-  call get_param(PF, mdl, "OBC_PROJECTION_BUG", OBC_projection_bug, &
-                 "If false, use only interior ocean points at OBCs to specify several "//&
-                 "calculations at OBC points, and it avoids applying a land mask at the bay-like "//&
-                 "intersection of orthogonal OBC segments.  Otherwise the calculation of terms "//&
-                 "like the potential vorticity used in the barotropic solver relies on bathymetry "//&
-                 "or other fields being projected outward across OBCs.  This option changes "//&
-                 "answers for some configurations that use OBCs.", &
-                 default=enable_bugs, do_not_log=.not.associated(OBC))
-  open_corners = .not.OBC_projection_bug
+  call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
 
   ! This call sets masks that prohibit flow over any point interpreted as land
-  if (associated(OBC)) then
-    if (OBC_projection_bug) &
-      call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
-    call initialize_masks(G, PF, US, OBC_dir_u=OBC%segnum_u, OBC_dir_v=OBC%segnum_v, open_corner_OBCs=open_corners)
-  else
-    call initialize_masks(G, PF, US)
-  endif
+  call initialize_masks(G, PF, US)
 
   ! Make OBC mask consistent with land mask
   call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
@@ -188,6 +174,9 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
 
 ! Compute global integrals of grid values for later use in scalar diagnostics !
   call compute_global_grid_integrals(G, US=US)
+
+! Write out all of the grid data used by this run.
+  if (write_geom) call write_ocean_geometry_file(G, PF, output_dir, US=US)
 
   call callTree_leave('MOM_initialize_fixed()')
 
