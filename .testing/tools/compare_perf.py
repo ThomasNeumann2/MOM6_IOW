@@ -33,9 +33,7 @@ def main():
 
     clock_cmp = {}
 
-    name_len = 60
-    table_fmt = '{:' + str(name_len) + 's}{:8s}  {:8s}'
-    print(table_fmt.format('', 'Profile', 'Reference'))
+    print('{:35s}{:8s}  {:8s}'.format('', 'Profile', 'Reference'))
     print()
 
     with open(args.expt) as profile_expt, open(args.ref) as profile_ref:
@@ -95,12 +93,12 @@ def main():
                 # Remove GCC optimization renaming
                 sname = sname.replace('.constprop.0', '')
 
-                if len(sname) > name_len - 3:
-                    sname = sname[:name_len - 6] + '...'
+                if len(sname) > 32:
+                    sname = sname[:29] + '...'
 
                 print('{}{}: {:7.3f}s, {:7.3f}s ({:.1f}%){}'.format(
                     ansi_color,
-                    ' ' * (name_len - 3 - len(sname)) + sname,
+                    ' ' * (32 - len(sname)) + sname,
                     t_expt,
                     t_ref,
                     100. * dclk,

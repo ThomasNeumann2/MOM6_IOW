@@ -195,8 +195,8 @@ doxygen:
 	git clone -b $(DOXYGEN_RELEASE) --depth 1 https://github.com/doxygen/doxygen
 
 doxygen/bin/doxygen: doxygen
-	(cd $(<); cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -G "Unix Makefiles" .)
-	(cd $(<); $(MAKE))
+	(cd $(<); cmake -G "Unix Makefiles" .)
+	(cd $(<); make)
 
 nortd: $(DOXYGENBIN) $(BUILDDIR)
 ifdef DOXYGEN_CONF
