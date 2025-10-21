@@ -110,10 +110,17 @@ type, public :: MOM_dyn_unsplit_RK2_CS ; private
     PFv, &    !< PFv = -dM/dy [L T-2 ~> m s-2].
     diffv     !< Meridional acceleration due to convergence of the along-isopycnal stress tensor [L T-2 ~> m s-2].
 
+#ifdef IOW
+ real, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
+                                                     !! to the seafloor [R L Z T-2 ~> Pa]
+ real, pointer, dimension(:,:) :: tauy_bot => NULL() !< frictional y-bottom stress from the ocean
+                                                     !! to the seafloor [R L Z T-2 ~> Pa]
+#else
   real, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
   real, pointer, dimension(:,:) :: tauy_bot => NULL() !< frictional y-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
+#endif
 
   real    :: be             !< A nondimensional number from 0.5 to 1 that controls
                             !! the backward weighting of the time stepping scheme [nondim].

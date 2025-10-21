@@ -146,10 +146,18 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   type(KPP_CS),           pointer :: KPP_CSp => NULL() !< KPP control structure needed to ge
   type(energetic_PBL_CS), pointer :: energetic_PBL_CSp => NULL()  !< ePBL control structure
 
+#ifdef IOW
+  real, public, pointer, dimension(:,:) :: taux_bot => NULL()  !< frictional x-bottom stress from the ocean
+                                                       !! to the seafloor [R L Z T-2 ~> Pa]
+  real, public, pointer, dimension(:,:) :: tauy_bot => NULL()  !< frictional y-bottom stress from the ocean
+                                                       !! to the seafloor [R L Z T-2 ~> Pa]
+
+#else
   real, pointer, dimension(:,:) :: taux_bot => NULL()  !< frictional x-bottom stress from the ocean
                                                        !! to the seafloor [R L Z T-2 ~> Pa]
   real, pointer, dimension(:,:) :: tauy_bot => NULL()  !< frictional y-bottom stress from the ocean
                                                        !! to the seafloor [R L Z T-2 ~> Pa]
+#endif
   type(BT_cont_type), pointer   :: BT_cont  => NULL()  !<  A structure with elements that describe the
                                                        !! effective summed open face areas as a function
                                                        !! of barotropic flow.

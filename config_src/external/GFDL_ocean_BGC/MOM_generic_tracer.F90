@@ -146,7 +146,11 @@ end subroutine initialize_MOM_generic_tracer
 !! CFCs are relatively simple, as they are passive tracers. with only a surface
 !! flux as a source.
 subroutine MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, Hml, dt, G, GV, US, CS, tv, optics, &
+#ifdef IOW
+        evap_CFL_limit, minimum_forcing_depth, KdBio, tau_bot)
+#else
       evap_CFL_limit, minimum_forcing_depth)
+#endif
   type(ocean_grid_type),   intent(in) :: G     !< The ocean's grid structure
   type(verticalGrid_type), intent(in) :: GV    !< The ocean's vertical grid structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
@@ -173,6 +177,10 @@ subroutine MOM_generic_tracer_column_physics(h_old, h_new, ea, eb, fluxes, Hml, 
   real,          optional, intent(in) :: minimum_forcing_depth !< The smallest depth over which fluxes
                                                !!  can be applied [H ~> m or kg m-2]
                                                !   Stored previously in diabatic CS.
+#ifdef IOW
+    real,  dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), optional, intent(in) :: KdBio
+    real,  Dimension(SZI_(G),SZJ_(G)),            optional, intent(in) :: tau_bot
+#endif
 
 end subroutine MOM_generic_tracer_column_physics
 
