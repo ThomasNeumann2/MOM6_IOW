@@ -108,7 +108,7 @@ end type opacity_CS
 !>@{ Coded integers to specify the opacity scheme
 #ifdef IOW
 integer, parameter :: NO_SCHEME = 0, MANIZZA_05 = 1, MOREL_88 = 2, SINGLE_EXP = 3, DOUBLE_EXP = 4,&
-                      HLMANN_03 = 5, ERGOM = 11
+                      OHLMANN_03 = 5, ERGOM = 11
 #else
 integer, parameter :: NO_SCHEME = 0, MANIZZA_05 = 1, MOREL_88 = 2, SINGLE_EXP = 3, DOUBLE_EXP = 4,&
      &                OHLMANN_03 = 5
