@@ -45,24 +45,24 @@ public Update_Stokes_Drift ! Public interface to update the Stokes drift profile
 public get_Langmuir_Number ! Public interface to compute Langmuir number called from
 ! ePBL or KPP routines.
 public Stokes_PGF ! Public interface to compute Stokes-shear induced pressure gradient force anomaly
-        public StokesMixing ! NOT READY - Public interface to add down-Stokes gradient
+public StokesMixing ! NOT READY - Public interface to add down-Stokes gradient
 ! momentum mixing (e.g. the approach of Harcourt 2013/2015)
-        public CoriolisStokes ! NOT READY - Public interface to add Coriolis-Stokes acceleration
+public CoriolisStokes ! NOT READY - Public interface to add Coriolis-Stokes acceleration
         ! of the mean currents, needed for comparison with LES.  It is
         ! presently advised against implementing in non-1d settings without
         ! serious consideration of the full 3d wave-averaged Navier-Stokes
         ! CL2 effects.
-        public Waves_end ! public interface to deallocate and free wave related memory.
-        public get_wave_method ! public interface to obtain the wave method string
-        public waves_register_restarts ! public interface to register wave restart fields
+public Waves_end ! public interface to deallocate and free wave related memory.
+public get_wave_method ! public interface to obtain the wave method string
+public waves_register_restarts ! public interface to register wave restart fields
 
         ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
         ! consistency testing. These are noted in comments with units like Z, H, L, and T, along with
         ! their mks counterparts with notation like "a velocity [Z T-1 ~> m s-1]".  If the units
         ! vary with the Boussinesq approximation, the Boussinesq variant is given first.
 
-        !> Container for all surface wave related parameters
-        type, public :: wave_parameters_CS ; private
+!> Container for all surface wave related parameters
+type, public :: wave_parameters_CS ; private
 
         ! Main surface wave options and publicly visible variables
         logical, public :: UseWaves = .false.     !< Flag to enable surface gravity wave feature
@@ -135,7 +135,7 @@ public Stokes_PGF ! Public interface to compute Stokes-shear induced pressure gr
         real, allocatable, dimension(:,:,:), public :: xmom, ymom !< (i,j,tau), wave momentum
         real, allocatable, dimension(:,:), public   :: wave_p     !< peak frequency at time level taup1
         real, allocatable, dimension(:,:), public   :: wave_k     !< wave number (1/m)
-        real, allocatable, dimension(:,:), public   :: height     !< peak frequency at time level taup1
+        real, allocatable, dimension(:,:), public   :: height     !< wave height time level taup1
         real, allocatable, dimension(:,:), public   :: xstokes, ystokes !< Stokes drift east/north component  on t-grid
         real, allocatable, dimension(:,:), public   :: stokes     !< Stokes drift speed
         real, allocatable, dimension(:,:), public   :: uwbot      !< near bottom orbital velocity

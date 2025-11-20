@@ -56,7 +56,11 @@ use MOM_ice_shelf, only : initialize_ice_shelf_fluxes, initialize_ice_shelf_forc
 use MOM_ice_shelf, only : add_shelf_forces, ice_shelf_end, ice_shelf_save_restart
 use MOM_ice_shelf, only : ice_sheet_calving_to_ocean_sfc
 use MOM_wave_interface, only: wave_parameters_CS, MOM_wave_interface_init
-use MOM_wave_interface, only: Update_Surface_Waves
+use MOM_wave_interface, only: Update_Surface_Waves, Waves_end
+#ifdef IOW
+use MOM_sediment_interface, only : MOM_sediment_interface_init, sediment_parameters_CS
+use MOM_sediment_interface, only : sediment_end, update_sediment
+#endif
 use iso_fortran_env, only : int64
 
 #include <MOM_memory.h>
@@ -212,6 +216,10 @@ type, public :: ocean_state_type ; private
                               !! marine ice effects module.
   type(wave_parameters_cs), pointer :: &
     Waves => NULL()           !< A pointer to the surface wave control structure
+#ifdef IOW
+  type(sediment_parameters_CS), pointer :: &
+    Sediment => NULL()           !< A pointer to the sediment control structure
+#endif
   type(surface_forcing_CS), pointer :: &
     forcing_CSp => NULL()     !< A pointer to the MOM forcing control structure
   type(diag_ctrl), pointer :: &
@@ -286,7 +294,11 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in, wind_stagger, gas
   call initialize_MOM(OS%Time, Time_init, param_file, OS%dirs, OS%MOM_CSp, &
                       Time_in, offline_tracer_mode=OS%offline_tracer_mode, &
                       diag_ptr=OS%diag, count_calls=.true., ice_shelf_CSp=OS%ice_shelf_CSp, &
+#ifdef IOW
+                      waves_CSp=OS%Waves, calve_ice_shelf_bergs=point_calving, sediment_CSp=OS%Sediment)
+#else
                       waves_CSp=OS%Waves, calve_ice_shelf_bergs=point_calving)
+#endif
   call get_MOM_state_elements(OS%MOM_CSp, G=OS%grid, GV=OS%GV, US=OS%US, C_p=OS%C_p, &
                               C_p_scaled=OS%fluxes%C_p, use_temp=use_temperature)
 
@@ -398,6 +410,10 @@ subroutine ocean_model_init(Ocean_sfc, OS, Time_init, Time_in, wind_stagger, gas
   ! MOM_wave_interface_init is called regardless of the value of USE_WAVES because
   ! it also initializes statistical waves.
   call MOM_wave_interface_init(OS%Time, OS%grid, OS%GV, OS%US, param_file, OS%Waves, OS%diag)
+
+#ifdef IOW
+  call MOM_sediment_interface_init(OS%Time, OS%grid, OS%US, param_file, OS%Sediment, OS%diag)
+#endif
 
   call initialize_ocean_public_type(OS%grid%Domain, Ocean_sfc, OS%diag, &
                                     gas_fields_ocn=gas_fields_ocn)
@@ -606,15 +622,26 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, time_start_upda
     if (present(cycle_length)) then
       call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_coupling, OS%MOM_CSp, &
                   Waves=OS%Waves, do_dynamics=do_dyn, do_thermodynamics=do_thermo, &
+#ifdef IOW
+                  Sediment=OS%Sediment, &
+#endif
                   start_cycle=start_cycle, end_cycle=end_cycle, cycle_length=OS%US%s_to_T*cycle_length, &
                   reset_therm=Ocn_fluxes_used)
     else
       call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_coupling, OS%MOM_CSp, &
                   Waves=OS%Waves, do_dynamics=do_dyn, do_thermodynamics=do_thermo, &
+#ifdef IOW
+                  Sediment=OS%Sediment, &
+#endif
                   start_cycle=start_cycle, end_cycle=end_cycle, reset_therm=Ocn_fluxes_used)
     endif
   elseif (OS%single_step_call) then
+#ifdef IOW
+    call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_coupling, OS%MOM_CSp, Waves=OS%Waves, &
+                  Sediment=OS%Sediment)
+#else
     call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_coupling, OS%MOM_CSp, Waves=OS%Waves)
+#endif
   else  ! Step both the dynamics and thermodynamics with separate calls.
     n_max = 1 ; if (dt_coupling > OS%dt) n_max = ceiling(dt_coupling/OS%dt - 0.001)
     dt_dyn = dt_coupling / real(n_max)
@@ -638,15 +665,24 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, time_start_upda
           dtdia = dt_dyn*min(nts,n_max-(n-1))
           call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dtdia, OS%MOM_CSp, &
                         Waves=OS%Waves, do_dynamics=.false., do_thermodynamics=.true., &
+#ifdef IOW
+                        Sediment=OS%Sediment, &
+#endif
                         start_cycle=(n==1), end_cycle=.false., cycle_length=dt_coupling)
         endif
 
         call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_dyn, OS%MOM_CSp, &
                       Waves=OS%Waves, do_dynamics=.true., do_thermodynamics=.false., &
+#ifdef IOW
+                        Sediment=OS%Sediment, &
+#endif
                       start_cycle=.false., end_cycle=(n==n_max), cycle_length=dt_coupling)
       else
         call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dt_dyn, OS%MOM_CSp, &
                       Waves=OS%Waves, do_dynamics=.true., do_thermodynamics=.false., &
+#ifdef IOW
+                        Sediment=OS%Sediment, &
+#endif
                       start_cycle=(n==1), end_cycle=.false., cycle_length=dt_coupling)
 
         step_thermo = .false.
@@ -664,6 +700,9 @@ subroutine update_ocean_model(Ice_ocean_boundary, OS, Ocean_sfc, time_start_upda
           Time1 = Time1 - real_to_time(OS%US%T_to_s*(dtdia - dt_dyn))
           call step_MOM(OS%forces, OS%fluxes, OS%sfc_state, Time1, dtdia, OS%MOM_CSp, &
                         Waves=OS%Waves, do_dynamics=.false., do_thermodynamics=.true., &
+#ifdef IOW
+                        Sediment=OS%Sediment, &
+#endif
                         start_cycle=.false., end_cycle=(n==n_max), cycle_length=dt_coupling)
         endif
       endif
@@ -747,6 +786,10 @@ subroutine ocean_model_end(Ocean_sfc, Ocean_state, Time)
 
   call ocean_model_save_restart(Ocean_state, Time)
   call diag_mediator_end(Time, Ocean_state%diag)
+#ifdef IOW
+  call Waves_end(Ocean_state%Waves)
+  call sediment_end(Ocean_state%Sediment)
+#endif
   call MOM_end(Ocean_state%MOM_CSp)
   if (Ocean_state%use_ice_shelf) call ice_shelf_end(Ocean_state%Ice_shelf_CSp)
 end subroutine ocean_model_end

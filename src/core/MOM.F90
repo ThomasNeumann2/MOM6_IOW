@@ -159,6 +159,10 @@ use MOM_verticalGrid,          only : verticalGrid_type, verticalGridInit, verti
 use MOM_verticalGrid,          only : get_thickness_units, get_flux_units, get_tr_flux_units
 use MOM_wave_interface,        only : wave_parameters_CS, waves_end, waves_register_restarts
 use MOM_wave_interface,        only : Update_Stokes_Drift
+#ifdef IOW
+use MOM_sediment_interface,    only : sediment_parameters_CS, sediment_register_restarts
+use MOM_sediment_interface,    only : update_sediment
+#endif
 
 ! Database client used for machine-learning interface
 use MOM_database_comms,       only : dbcomms_CS_type, database_comms_init, dbclient_type
@@ -318,6 +322,9 @@ type, public :: MOM_control_struct ; private
   logical :: useMEKE                 !< If true, call the MEKE parameterization.
   logical :: use_stochastic_EOS      !< If true, use the stochastic EOS parameterizations.
   logical :: useWaves                !< If true, update Stokes drift
+#ifdef IOW
+  logical :: useSediment             !< If true, update Sediment
+#endif
   real :: dtbt_reset_period          !< The time interval between dynamic recalculation of the
                                      !! barotropic time step [T ~> s]. If this is negative dtbt is never
                                      !! calculated, and if it is 0, dtbt is calculated every step.
@@ -513,7 +520,11 @@ contains
 !! advect_tracer and tracer_hordiff.  Vertical mixing and possibly remapping
 !! occur inside of diabatic.
 subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS, &
+#ifdef IOW
+                    Waves, Sediment, do_dynamics, do_thermodynamics, start_cycle, &
+#else
                     Waves, do_dynamics, do_thermodynamics, start_cycle, &
+#endif
                     end_cycle, cycle_length, reset_therm)
   type(mech_forcing), target, intent(inout) :: forces_in !< A structure with the driving mechanical forces
   type(forcing), target, intent(inout) :: fluxes_in  !< A structure with pointers to themodynamic,
@@ -524,6 +535,10 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
   type(MOM_control_struct), intent(inout), target :: CS   !< control structure from initialize_MOM
   type(Wave_parameters_CS), &
             optional, pointer       :: Waves         !< An optional pointer to a wave property CS
+#ifdef IOW
+  type(sediment_parameters_CS), &
+            optional, pointer       :: Sediment      !< An optional pointer to a sediment property CS
+#endif
   logical,  optional, intent(in)    :: do_dynamics   !< Present and false, do not do updates due
                                                      !! to the dynamics.
   logical,  optional, intent(in)    :: do_thermodynamics  !< Present and false, do not do updates due
@@ -828,6 +843,16 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       call Update_Stokes_Drift(G, GV, US, Waves, dz, U_star, time_interval, do_dyn)
     endif
   endif
+
+#ifdef IOW
+  if(present(Sediment)) then
+    if (CS%useSediment) then
+      call enable_averages(time_interval, Time_start + real_to_time(US%T_to_s*time_interval), CS%diag)
+      call update_sediment(Sediment, G)
+      call disable_averaging(CS%diag)
+    endif
+  endif
+#endif
 
   if (CS%debug) then
     if (cycle_start) &
@@ -2209,7 +2234,11 @@ end subroutine step_offline
 subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                           Time_in, offline_tracer_mode, input_restart_file, diag_ptr, &
                           count_calls, tracer_flow_CSp,  ice_shelf_CSp, waves_CSp, ensemble_num, &
+#ifdef IOW
+                          calve_ice_shelf_bergs, sediment_CSp)
+#else
                           calve_ice_shelf_bergs)
+#endif
   type(time_type), target,   intent(inout) :: Time        !< model time, set in this routine
   type(time_type),           intent(in)    :: Time_init   !< The start time for the coupled model's calendar
   type(param_file_type),     intent(out)   :: param_file  !< structure indicating parameter file to parse
@@ -2234,6 +2263,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                                                           !! ensemble manager)
   logical, optional :: calve_ice_shelf_bergs !< If true, will add point iceberg calving variables to the ice
                                              !! shelf restart
+#ifdef IOW
+  type(sediment_parameters_CS), optional, pointer ::  sediment_CSp !< An optional pointer to a sediment property CS
+#endif
   ! local variables
   type(ocean_grid_type),  pointer :: G => NULL()    ! A pointer to the metric grid use for the run
   type(ocean_grid_type),  pointer :: G_in => NULL() ! Pointer to the input grid
@@ -2512,6 +2544,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                  default=.false.)
   call get_param(param_file, "MOM", "USE_WAVES", CS%UseWaves, default=.false., &
                  do_not_log=.true.)
+#ifdef IOW
+  call get_param(param_file, "MOM", "USE_SEDIMENT", CS%useSediment, default=.false., &
+                 do_not_log=.true.)
+#endif
 
   call get_param(param_file, "MOM", "DEBUG", CS%debug, &
                  "If true, write out verbose debugging data.", &
@@ -3125,6 +3161,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   if (present(waves_CSp)) then
     call waves_register_restarts(waves_CSp, HI, GV, US, param_file, restart_CSp)
   endif
+#ifdef IOW
+  if(present(sediment_CSp)) then
+    call sediment_register_restarts(sediment_CSp, HI, US, param_file, restart_CSp)
+  endif
+#endif
 
   if (use_temperature) then
     call stoch_EOS_register_restarts(HI, param_file, CS%stoch_eos_CS, restart_CSp)
