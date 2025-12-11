@@ -43,6 +43,9 @@ module marbl_interface_public_types
     !> A non-functioning template of MARBL forcing metadata type
     type :: marbl_forcing_fields_metadata_type
         character(len=0) :: varname  !< dummy name
+#ifdef IOW
+         character(len=0) :: another_varname !< dummy name (modified: LEV)
+#endif
     end type marbl_forcing_fields_metadata_type
 
     !> A non-functioning template of MARBL forcing type
