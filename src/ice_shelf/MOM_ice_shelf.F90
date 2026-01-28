@@ -197,6 +197,7 @@ type, public :: ice_shelf_CS ; private
                                          !! divided by the von Karman constant VK [nondim]. Was 1/8.
   real :: Vk                             !< Von Karman's constant [nondim]
   real :: Rc                             !< critical flux Richardson number [nondim]
+  logical :: ustar_from_vel_bugfix       !< If true, fixes ustar from ocean velocity bug
   logical :: buoy_flux_itt_bugfix        !< If true, fixes buoyancy iteration bug
   logical :: salt_flux_itt_bugfix        !< If true, fixes salt iteration bug
   real :: buoy_flux_tol                  !< Fractional buoyancy iteration tolerance for convergence [nondim]
@@ -300,6 +301,7 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
   real :: Rf_crit  !< critical flux Richardson number  [nondim]
   real :: I_2Zeta_N !< Half the inverse of Zeta_N [nondim].
   real :: I_LF     !< The inverse of the latent heat of fusion [Q-1 ~> kg J-1].
+  real :: I_dt_LHF  ! The inverse of the timestep times the latent heat of fusion [Q-1 T-1 ~> kg J-1 s-1].
   real :: I_VK     !< The inverse of the Von Karman constant [nondim].
   real :: PR, SC   !< The Prandtl number and Schmidt number [nondim].
 
@@ -337,13 +339,13 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
   real :: Sb_min, Sb_max ! Minimum and maximum boundary salinities [S ~> ppt]
   real :: dS_min, dS_max ! Minimum and maximum salinity changes [S ~> ppt]
   ! Variables used in iterating for wB_flux.
-  real :: wB_flux_next ! The next interation's guess for wB_flux [Z2 T-3 ~> m2 s-2]
-  real :: wB_flux_new  ! An updated value of wB_flux when Gam_turb is based on wB_flux [Z2 T-3 ~> m2 s-2]
-  real :: wB_flux_max  ! The upper bound on wB_flux [Z2 T-3 ~> m2 s-2]
-  real :: wB_flux_min  ! The lower bound on wB_flux [Z2 T-3 ~> m2 s-2]
+  real :: wB_flux_next ! The next interation's guess for wB_flux [Z2 T-3 ~> m2 s-3]
+  real :: wB_flux_new  ! An updated value of wB_flux when Gam_turb is based on wB_flux [Z2 T-3 ~> m2 s-3]
+  real :: wB_flux_max  ! The upper bound on wB_flux [Z2 T-3 ~> m2 s-3]
+  real :: wB_flux_min  ! The lower bound on wB_flux [Z2 T-3 ~> m2 s-3]
   real :: dDwB_dwB     ! The slope of the change in wB_flux between iterations with wB_flux [nondim]
-  real :: DwB_max      ! The change in wB_flux when it is wB_flux_max [Z2 T-3 ~> m2 s-2]
-  real :: DwB_min      ! The change in wB_flux when it is wB_flux_min [Z2 T-3 ~> m2 s-2]
+  real :: DwB_max      ! The change in wB_flux when it is wB_flux_max [Z2 T-3 ~> m2 s-3]
+  real :: DwB_min      ! The change in wB_flux when it is wB_flux_min [Z2 T-3 ~> m2 s-3]
   real :: I_Gam_T, I_Gam_S  ! Terms that vary inversely with Gam_mol_T or Gam_mol_S and Gam_turb [nondim]
   real :: dG_dwB       ! The derivative of Gam_turb with wB [T3 Z-2 ~> s3 m-2]
   real :: taux2, tauy2 ! The squared surface stresses [R2 L2 Z2 T-4 ~> Pa2].
@@ -357,7 +359,7 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
   logical :: update_ice_vel ! If true, it is time to update the ice shelf velocities.
   logical :: coupled_GL     ! If true, the grounding line position is determined based on
                             ! coupled ice-ocean dynamics.
-
+  logical :: add_frazil ! If true, allow frazil formation to modify ice-shelf water flux
   real, parameter :: c2_3 = 2.0/3.0 ! Two thirds [nondim]
   character(len=320) :: mesg  ! The text of an error message
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
@@ -406,6 +408,7 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
   Rf_crit = CS%Rc
   I_2Zeta_N = 0.5 / CS%Zeta_N
   I_LF = 1.0 / CS%Lat_fusion
+  I_dt_LHF = 1.0 / (time_step * CS%Lat_fusion)
   SC = CS%kv_molec/CS%kd_molec_salt
   PR = CS%kv_molec/CS%kd_molec_temp
   I_VK = 1.0/VK
@@ -463,7 +466,11 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
       tauy2 = (((asv1 * (sfc_state%tauy_shelf(i,J-1)**2)) + (asv2 * (sfc_state%tauy_shelf(i,J)**2))  ) * I_av)
     endif
     u2_av = (((asu1 * (sfc_state%u(I-1,j)**2)) + (asu2 * sfc_state%u(I,j)**2)) * I_au)
-    v2_av = (((asv1 * (sfc_state%v(i,J-1)**2)) + (asu2 * sfc_state%v(i,J)**2)) * I_av)
+    if (CS%ustar_from_vel_bugfix) then
+      v2_av = (((asv1 * (sfc_state%v(i,J-1)**2)) + (asv2 * sfc_state%v(i,J)**2)) * I_av)
+    else
+      v2_av = (((asv1 * (sfc_state%v(i,J-1)**2)) + (asu2 * sfc_state%v(i,J)**2)) * I_av)
+    endif
 
     if ((taux2 + tauy2 > 0.0) .and. .not.CS%ustar_shelf_from_vel) then
       if (CS%ustar_max >= 0.0) then
@@ -495,7 +502,8 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
 
     do i=is,ie
       if ((sfc_state%ocean_mass(i,j) > CS%col_mass_melt_threshold) .and. &
-          (ISS%area_shelf_h(i,j) > 0.0) .and. CS%isthermo) then
+          (ISS%area_shelf_h(i,j) > 0.0) .and. CS%isthermo &
+           .and. ISS%melt_mask(i,j)>0.0) then
 
         if (CS%threeeq) then
           !   Iteratively determine a self-consistent set of fluxes, with the ocean
@@ -814,10 +822,20 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
     enddo ! i-loop
   enddo ! j-loop
 
+  if (allocated(sfc_state%frazil)) then
+    add_frazil = .true.
+  else
+    add_frazil = .false.
+  endif
 
   do j=js,je ; do i=is,ie
     ! ISS%water_flux = net liquid water into the ocean [R Z T-1 ~> kg m-2 s-1]
-    fluxes%iceshelf_melt(i,j) = ISS%water_flux(i,j) * CS%flux_factor
+    if (CS%flux_factor/=1.0) then
+      ISS%water_flux(i,j) = ISS%water_flux(i,j) * CS%flux_factor
+      ISS%tflux_ocn(i,j) = ISS%tflux_ocn(i,j) * CS%flux_factor
+      if (CS%threeeq .and. ISS%tflux_ocn(i,j) < 0.0 .and. (.not. CS%insulator)) &
+        ISS%tflux_shelf(i,j)=ISS%tflux_ocn(i,j) + CS%Lat_fusion * ISS%water_flux(i,j)
+    endif
 
     if ((sfc_state%ocean_mass(i,j) > CS%col_mass_melt_threshold) .and. &
         (ISS%area_shelf_h(i,j) > 0.0) .and.  (CS%isthermo)) then
@@ -826,7 +844,6 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
       ! This is needed for the ISOMIP test case.
       if (ISS%mass_shelf(i,j) < CS%Rho_ocn*CS%cutoff_depth) then
         ISS%water_flux(i,j) = 0.0
-        fluxes%iceshelf_melt(i,j) = 0.0
       endif
       ! Compute haline driving, which is one of the diags. used in ISOMIP
       if (exch_vel_s(i,j)>0.) haline_driving(i,j) = (ISS%water_flux(i,j) * Sbdry(i,j)) / (CS%Rho_ocn * exch_vel_s(i,j))
@@ -834,7 +851,7 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
       !!!!!!!!!!!!!!!!!!!!!!!!!!!!Safety checks !!!!!!!!!!!!!!!!!!!!!!!!!
       !1)Check if haline_driving computed above is consistent with
       ! haline_driving = sfc_state%sss - Sbdry
-      !if (fluxes%iceshelf_melt(i,j) /= 0.0) then
+      !if (ISS%water_flux(i,j) /= 0.0) then
       !   if (haline_driving(i,j) /= (sfc_state%sss(i,j) - Sbdry(i,j))) then
       !     write(mesg,*) 'at i,j=',i,j,' haline_driving, sss-Sbdry',US%S_to_ppt*haline_driving(i,j), &
       !                   US%S_to_ppt*(sfc_state%sss(i,j) - Sbdry(i,j))
@@ -845,8 +862,8 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
 
       ! 2) check if |melt| > 0 when ustar_shelf = 0.
       ! this should never happen
-      if ((abs(fluxes%iceshelf_melt(i,j))>0.0) .and. (fluxes%ustar_shelf(i,j) == 0.0)) then
-        write(mesg,*) "|melt| = ",fluxes%iceshelf_melt(i,j)," > 0 and ustar_shelf = 0. at i,j", i, j
+      if ((abs(ISS%water_flux(i,j))>0.0) .and. (fluxes%ustar_shelf(i,j) == 0.0)) then
+        write(mesg,*) "|melt| = ",ISS%water_flux(i,j)," > 0 and ustar_shelf = 0. at i,j", i, j
         call MOM_error(FATAL, "shelf_calc_flux: "//trim(mesg))
       endif
        !!!!!!!!!!!!!!!!!!!!!!!!!!!!End of safety checks !!!!!!!!!!!!!!!!!!!
@@ -854,11 +871,15 @@ subroutine shelf_calc_flux(sfc_state_in, fluxes_in, Time, time_step_in, CS)
       ! This is grounded ice, that could be modified to melt if a geothermal heat flux were used.
       haline_driving(i,j) = 0.0
       ISS%water_flux(i,j) = 0.0
-      fluxes%iceshelf_melt(i,j) = 0.0
     endif ! area_shelf_h
 
     ! mass flux [R Z L2 T-1 ~> kg s-1], part of ISOMIP diags.
     mass_flux(i,j) = ISS%water_flux(i,j) * ISS%area_shelf_h(i,j)
+
+    !Add frazil formation
+    if (add_frazil .and. (ISS%hmask(i,j) == 1 .or. ISS%hmask(i,j) == 2)) &
+      ISS%water_flux(i,j) = ISS%water_flux(i,j) - sfc_state%frazil(i,j) * I_dt_LHF
+    fluxes%iceshelf_melt(i,j) = ISS%water_flux(i,j)
   enddo ; enddo ! i- and j-loops
 
   if (CS%active_shelf_dynamics .or. CS%override_shelf_movement) then
@@ -1309,15 +1330,15 @@ subroutine add_shelf_flux(G, US, CS, sfc_state, fluxes, time_step)
     if (associated(fluxes%evap)) fluxes%evap(i,j) = frac_open * fluxes%evap(i,j)
     if (associated(fluxes%lprec)) then
       if (ISS%water_flux(i,j) > 0.0) then
-        fluxes%lprec(i,j) =  frac_shelf*ISS%water_flux(i,j)*CS%flux_factor + frac_open * fluxes%lprec(i,j)
+        fluxes%lprec(i,j) =  frac_shelf*ISS%water_flux(i,j) + frac_open * fluxes%lprec(i,j)
       else
         fluxes%lprec(i,j) = frac_open * fluxes%lprec(i,j)
-        fluxes%evap(i,j) = fluxes%evap(i,j) + frac_shelf*ISS%water_flux(i,j)*CS%flux_factor
+        fluxes%evap(i,j) = fluxes%evap(i,j) + frac_shelf*ISS%water_flux(i,j)
       endif
     endif
 
     if (associated(fluxes%sens)) &
-      fluxes%sens(i,j) = frac_shelf*ISS%tflux_ocn(i,j)*CS%flux_factor + frac_open * fluxes%sens(i,j)
+      fluxes%sens(i,j) = frac_shelf*ISS%tflux_ocn(i,j) + frac_open * fluxes%sens(i,j)
     ! The salt flux should be mostly from sea ice, so perhaps none should be intercepted and this should be changed.
     if (associated(fluxes%salt_flux)) &
       fluxes%salt_flux(i,j) = frac_shelf * ISS%salt_flux(i,j)*CS%flux_factor + frac_open * fluxes%salt_flux(i,j)
@@ -1782,6 +1803,9 @@ subroutine initialize_ice_shelf(param_file, ocn_grid, Time, CS, diag, Time_init,
   call get_param(param_file, mdl, "ICE_SHELF_RC", CS%Rc, &
                  "Critical flux Richardson number for ice melt ", &
                  units="nondim", default=0.20)
+  call get_param(param_file, mdl, "ICE_SHELF_USTAR_FROM_VEL_BUGFIX", CS%ustar_from_vel_bugfix, &
+                 "Bug fix for ice-area weighting of squared ocean velocities "//&
+                 "used to calculate friction velocity under ice shelves", default=.false.)
   call get_param(param_file, mdl, "ICE_SHELF_BUOYANCY_FLUX_ITT_BUGFIX", CS%buoy_flux_itt_bugfix, &
                  "Bug fix of buoyancy iteration", default=.true., old_name="ICE_SHELF_BUOYANCY_FLUX_ITT_BUG")
   call get_param(param_file, mdl, "ICE_SHELF_SALT_FLUX_ITT_BUGFIX", CS%salt_flux_itt_bugfix, &
@@ -1900,8 +1924,8 @@ subroutine initialize_ice_shelf(param_file, ocn_grid, Time, CS, diag, Time_init,
 
     if (new_sim) then
       ! new simulation, initialize ice thickness as in the static case
-      call initialize_ice_thickness(ISS%h_shelf, ISS%area_shelf_h, ISS%hmask, CS%Grid, CS%Grid_in, US, param_file,  &
-            CS%rotate_index, CS%turns)
+      call initialize_ice_thickness(ISS%h_shelf, ISS%area_shelf_h, ISS%hmask, ISS%melt_mask, CS%Grid, CS%Grid_in, &
+                                    US, param_file, CS%rotate_index, CS%turns)
 
     ! next make sure mass is consistent with thickness
       do j=G%jsd,G%jed ; do i=G%isd,G%ied
@@ -1935,6 +1959,8 @@ subroutine initialize_ice_shelf(param_file, ocn_grid, Time, CS, diag, Time_init,
                               "Ice shelf area in cell", "m2", conversion=US%L_to_m**2)
   call register_restart_field(ISS%h_shelf, "h_shelf", .true., CS%restart_CSp, &
                               "ice sheet/shelf thickness", "m", conversion=US%Z_to_m)
+  call register_restart_field(ISS%melt_mask, "melt_mask", .false., CS%restart_CSp, &
+                              "Mask that is >0 where ice-shelf melting is allowed", "none")
 
   if (CS%calve_ice_shelf_bergs) then
     call register_restart_field(ISS%calving, "shelf_calving", .true., CS%restart_CSp, &
@@ -1981,8 +2007,8 @@ subroutine initialize_ice_shelf(param_file, ocn_grid, Time, CS, diag, Time_init,
 
   if (new_sim .and. (.not. (CS%override_shelf_movement .and. CS%mass_from_file))) then
     ! This model is initialized internally or from a file.
-    call initialize_ice_thickness(ISS%h_shelf, ISS%area_shelf_h, ISS%hmask, CS%Grid, CS%Grid_in, US, param_file,&
-          CS%rotate_index, CS%turns)
+    call initialize_ice_thickness(ISS%h_shelf, ISS%area_shelf_h, ISS%hmask, ISS%melt_mask, CS%Grid, CS%Grid_in, &
+                                  US, param_file, CS%rotate_index, CS%turns)
     ! next make sure mass is consistent with thickness
     do j=G%jsd,G%jed ; do i=G%isd,G%ied
       if ((ISS%hmask(i,j) == 1) .or. (ISS%hmask(i,j) == 2) .or. (ISS%hmask(i,j) == 3)) then

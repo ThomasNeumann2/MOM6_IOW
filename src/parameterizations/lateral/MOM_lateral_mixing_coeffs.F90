@@ -206,6 +206,7 @@ subroutine calc_depth_function(G, CS)
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq
   integer :: i, j
   real    :: H0   ! The depth above which KHTH is linearly scaled away [Z ~> m]
+  real    :: h1, h2  ! Temporary total thicknesses [Z ~> m]
   real    :: expo ! exponent used in the depth dependent scaling [nondim]
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -224,11 +225,15 @@ subroutine calc_depth_function(G, CS)
   expo = CS%depth_scaled_khth_exp
 !$OMP do
   do j=js,je ; do I=is-1,Ieq
-    CS%Depth_fn_u(I,j) = (MIN(1.0, (0.5*(G%bathyT(i,j) + G%bathyT(i+1,j)) + G%Z_ref)/H0))**expo
+    h1 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
+    h2 = max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0)
+    CS%Depth_fn_u(I,j) = (MIN(1.0, (0.5 * (h1 + h2)) / H0))**expo
   enddo ; enddo
 !$OMP do
   do J=js-1,Jeq ; do i=is,ie
-    CS%Depth_fn_v(i,J) = (MIN(1.0, (0.5*(G%bathyT(i,j) + G%bathyT(i,j+1)) + G%Z_ref)/H0))**expo
+    h1 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
+    h2 = max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0)
+    CS%Depth_fn_v(i,J) = (MIN(1.0, (0.5 * (h1 + h2)) / H0))**expo
   enddo ; enddo
 
 end subroutine calc_depth_function
@@ -841,9 +846,9 @@ subroutine calc_Visbeck_coeffs_old(h, slope_x, slope_y, N2_u, N2_v, G, GV, US, C
   integer :: OBC_dir_v(SZI_(G),SZJB_(G))  ! An integer indicating where there are v OBCs: +1 for
                                  ! northern OBCs, -1 for southern OBCs and 0 at points with no OBCs.
   real :: h4_u(SZIB_(G),SZJ_(G),SZK_(GV)+1)  ! The product of the 4 thicknesses surrounding a u-point
-                                 ! interface or the inward equivalent with OBCs [H4 ~> m4 or kg2 m-4]
+                                 ! interface or the inward equivalent with OBCs [H4 ~> m4 or kg4 m-8]
   real :: h4_v(SZI_(G),SZJB_(G),SZK_(GV)+1)  ! The product of the 4 thicknesses surrounding a v-point
-                                 ! interface or the inward equivalent with OBCs [H4 ~> m4 or kg2 m-4]
+                                 ! interface or the inward equivalent with OBCs [H4 ~> m4 or kg4 m-8]
   integer :: i, j, k, is, ie, js, je, nz
 
   if (.not. CS%initialized) call MOM_error(FATAL, "calc_Visbeck_coeffs_old: "// &
@@ -1192,6 +1197,7 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e)
   ! real :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! The vertical distance across each layer [Z ~> m]
   real :: H_cutoff      ! Local estimate of a minimum thickness for masking [H ~> m or kg m-2]
   real :: dZ_cutoff     ! A minimum water column depth for masking [H ~> m or kg m-2]
+  real :: h1, h2        ! Temporary total thicknesses [Z ~> m]
   real :: h_neglect     ! A thickness that is so small it is usually lost
                         ! in roundoff and can be neglected [H ~> m or kg m-2].
   real :: S2            ! Interface slope squared [Z2 L-2 ~> nondim]
@@ -1301,9 +1307,10 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e)
       enddo
     else
       do I=is-1,ie
-        if ( min(G%bathyT(i,j), G%bathyT(i+1,j)) + G%Z_ref > dZ_cutoff ) then
-          CS%SN_u(I,j) = G%OBCmaskCu(I,j) * sqrt( CS%SN_u(I,j) / &
-                                                  (max(G%bathyT(i,j), G%bathyT(i+1,j)) + G%Z_ref) )
+        h1 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
+        h2 = max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0)
+        if ( min(h1, h2) > dZ_cutoff ) then
+          CS%SN_u(I,j) = G%OBCmaskCu(I,j) * sqrt( CS%SN_u(I,j) / max(h1, h2) )
         else
           CS%SN_u(I,j) = 0.0
         endif
@@ -1326,9 +1333,10 @@ subroutine calc_slope_functions_using_just_e(h, G, GV, US, CS, e)
         ! There is a primordial horizontal indexing bug on the following line from the previous
         ! versions of the code.  This comment should be deleted by the end of 2024.
         ! if ( min(G%bathyT(i,j), G%bathyT(i+1,j)) + G%Z_ref > dZ_cutoff ) then
-        if ( min(G%bathyT(i,j), G%bathyT(i,j+1)) + G%Z_ref > dZ_cutoff ) then
-          CS%SN_v(i,J) = G%OBCmaskCv(i,J) * sqrt( CS%SN_v(i,J) / &
-                                                  (max(G%bathyT(i,j), G%bathyT(i,j+1)) + G%Z_ref) )
+        h1 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
+        h2 = max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0)
+        if ( min(h1, h2) > dZ_cutoff ) then
+          CS%SN_v(i,J) = G%OBCmaskCv(i,J) * sqrt( CS%SN_v(i,J) / max(h1, h2) )
         else
           CS%SN_v(i,J) = 0.0
         endif
