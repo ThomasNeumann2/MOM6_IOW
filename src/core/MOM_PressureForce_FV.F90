@@ -22,7 +22,7 @@ use MOM_density_integrals, only : int_density_dz_generic_plm, int_density_dz_gen
 use MOM_density_integrals, only : int_spec_vol_dp_generic_plm
 use MOM_density_integrals, only : int_density_dz_generic_pcm, int_spec_vol_dp_generic_pcm
 use MOM_density_integrals, only : diagnose_mass_weight_Z, diagnose_mass_weight_p
-use MOM_ALE, only : TS_PLM_edge_values, TS_PPM_edge_values, ALE_CS
+use MOM_ALE, only : TS_PLM_edge_values, TS_PPM_edge_values, TS_PLM_WLS_edge_values, ALE_CS
 
 implicit none ; private
 
@@ -353,6 +353,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
       call TS_PLM_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h, CS%boundary_extrap)
   elseif ( use_ALE .and. (CS%Recon_Scheme == 2) ) then
       call TS_PPM_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h, CS%boundary_extrap)
+  elseif ( use_ALE .and. (CS%Recon_Scheme == 3) ) then
+      call TS_PLM_WLS_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h)
   elseif (CS%reset_intxpa_integral) then
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       T_b(i,j,k) = tv%T(i,j,k) ; S_b(i,j,k) = tv%S(i,j,k)
@@ -365,7 +367,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     ! subsequent calculation.
     if (use_EOS) then
       if ( use_ALE .and. CS%Recon_Scheme > 0 ) then
-        if ( CS%Recon_Scheme == 1 ) then
+        if ( CS%Recon_Scheme == 1 .or. CS%Recon_Scheme == 3 ) then
           call int_spec_vol_dp_generic_plm( T_t(:,:,k), T_b(:,:,k), S_t(:,:,k), S_b(:,:,k), &
                     p(:,:,K), p(:,:,K+1), alpha_ref, dp_neglect, p(:,:,nz+1), G%HI, &
                     tv%eqn_of_state, US, dza(:,:,k), intp_dza(:,:,k), intx_dza(:,:,k), inty_dza(:,:,k), &
@@ -436,8 +438,9 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     else
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
-                  - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
+        SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref
+        ! Remove above sea level topography at floodable cells
+        SSH(i,j) = SSH(i,j) - max(-G%bathyT(i,j)-G%meanSL(i,j), 0.0)
       enddo ; enddo
       call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     endif
@@ -1161,7 +1164,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1
       do i=Isq,Ieq+1
-        SSH(i,j) = min(-G%bathyT(i,j) - G%Z_ref, 0.0)
+        SSH(i,j) = min(-G%bathyT(i,j) - G%meanSL(i,j), 0.0)
       enddo
       do k=1,nz ; do i=Isq,Ieq+1
         SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
@@ -1240,6 +1243,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     call TS_PLM_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h, CS%boundary_extrap)
   elseif ( use_ALE .and. (CS%Recon_Scheme == 2) ) then
     call TS_PPM_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h, CS%boundary_extrap)
+  elseif ( use_ALE .and. (CS%Recon_Scheme == 3) ) then
+      call TS_PLM_WLS_edge_values(ALE_CSp, S_t, S_b, T_t, T_b, G, GV, tv, h)
   elseif (CS%reset_intxpa_integral) then
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       T_b(i,j,k) = tv%T(i,j,k) ; S_b(i,j,k) = tv%S(i,j,k)
@@ -1271,7 +1276,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     enddo ; enddo
   else
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      Z_0p(i,j) = G%Z_ref
+      Z_0p(i,j) = G%meanSL(i,j)
     enddo ; enddo
   endif
 
@@ -1285,7 +1290,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
       ! is used, whereby densities within each layer are constant no matter
       ! where the layers are located.
       if ( use_ALE .and. CS%Recon_Scheme > 0 ) then
-        if ( CS%Recon_Scheme == 1 ) then
+        if ( CS%Recon_Scheme == 1 .or. CS%Recon_Scheme == 3 ) then
           call int_density_dz_generic_plm(k, tv, T_t, T_b, S_t, S_b, e, &
                     rho_ref, rho0_int_density, GV%g_Earth, dz_neglect, G%bathyT, &
                     G%HI, GV, tv%eqn_of_state, US, CS%use_stanley_pgf, dpa(:,:,k), intz_dpa(:,:,k), &
@@ -1355,7 +1360,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     else
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        SSH(i,j) = e(i,j,1) - max(-G%bathyT(i,j) - G%Z_ref, 0.0) ! Remove topography above sea level
+        SSH(i,j) = e(i,j,1) - G%Z_ref
+        ! Remove above sea level topography at floodable cells
+        SSH(i,j) = SSH(i,j) - max(-G%bathyT(i,j)-G%meanSL(i,j), 0.0)
       enddo ; enddo
       call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     endif
@@ -2078,16 +2085,16 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
                  "If true, apply tidal momentum forcing.", default=.false.)
   if (CS%tides) then
     call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
-                 "This sets the default value for the various _ANSWER_DATE parameters.", &
-                 default=99991231)
+                   "This sets the default value for the various _ANSWER_DATE parameters.", &
+                   default=99991231)
     call get_param(param_file, mdl, "TIDES_ANSWER_DATE", CS%tides_answer_date, "The vintage of "//&
-                  "self-attraction and loading (SAL) and tidal forcing calculations.  Setting "//&
-                  "dates before 20230701 recovers old answers (Boussinesq and non-Boussinesq "//&
-                  "modes) when SAL is part of the tidal forcing calculation.  The answer "//&
-                  "difference is only at bit level and due to a reordered summation.  Setting "//&
-                  "dates before 20250201 recovers answers (Boussinesq mode) that interface "//&
-                  "heights are modified before pressure force integrals are calculated.", &
-                  default=default_answer_date, do_not_log=(.not.CS%tides))
+                   "self-attraction and loading (SAL) and tidal forcing calculations.  Setting "//&
+                   "dates before 20230701 recovers old answers (Boussinesq and non-Boussinesq "//&
+                   "modes) when SAL is part of the tidal forcing calculation.  The answer "//&
+                   "difference is only at bit level and due to a reordered summation.  Setting "//&
+                   "dates before 20250201 recovers answers (Boussinesq mode) that interface "//&
+                   "heights are modified before pressure force integrals are calculated.", &
+                   default=default_answer_date, do_not_log=(.not.CS%tides))
   endif
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%tides)
@@ -2183,7 +2190,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
                  "integrals within the FV pressure gradient calculation.\n"//&
                  " 0: PCM or no reconstruction.\n"//&
                  " 1: PLM reconstruction.\n"//&
-                 " 2: PPM reconstruction.", default=1)
+                 " 2: PPM reconstruction.\n"//&
+                 " 3: PLM with least squares slope.", default=1)
   call get_param(param_file, mdl, "BOUNDARY_EXTRAPOLATION_PRESSURE", CS%boundary_extrap, &
                  "If true, the reconstruction of T & S for pressure in "//&
                  "boundary cells is extrapolated, rather than using PCM "//&
