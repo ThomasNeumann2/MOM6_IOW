@@ -7,3 +7,5 @@
 [submodule "config_src/external/CEFI_ocean_BGC"]
         path = config_src/external/CEFI_ocean_BGC
         url = https://github.com/ThomasNeumann2/CEFI_ocean_BGC.git
+	branch = dev-bgc/iow
+	update = merge
